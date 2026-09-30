@@ -28,7 +28,7 @@ class DefaultLiveUpdateManagerTest {
         )
         val adapter = RecordingAdapter()
         val sessionStore = RecordingSessionStore()
-        val manager = DefaultLiveUpdateManager(adapter, eligibility, sessionStore) { "session-1" }
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-1" }
 
         val result = manager.startOrUpdate(payload())
 
@@ -43,7 +43,7 @@ class DefaultLiveUpdateManagerTest {
         val eligibility = FakeEligibilityProvider(successResult())
         val adapter = RecordingAdapter()
         val sessionStore = RecordingSessionStore()
-        val manager = DefaultLiveUpdateManager(adapter, eligibility, sessionStore) { "session-xyz" }
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-xyz" }
 
         adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
         val firstResult = manager.startOrUpdate(payload())
@@ -51,9 +51,66 @@ class DefaultLiveUpdateManagerTest {
         assertTrue(sessionStore.isActive())
 
         adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.UPDATED)
-        val secondResult = manager.startOrUpdate(payload())
+        val secondResult = manager.startOrUpdate(payload(hasArrived = true))
         assertEquals("session-xyz", secondResult.sessionId)
         assertEquals(2, adapter.startCalls)
+    }
+
+    @Test
+    fun watchOnlySessionDoesNotReadAsActiveButLendsItsId() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        sessionStore.markActive(watchOnlySession("session-watch"))
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-new" }
+
+        assertFalse(sessionStore.isActive())
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        val result = manager.startOrUpdate(payload())
+
+        assertEquals("session-watch", result.sessionId)
+        assertTrue(sessionStore.isActive())
+    }
+
+    @Test
+    fun persistedSessionInAFreshProcessDoesNotDedup() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        // Session survives in prefs, but this adapter never posted anything
+        sessionStore.markActive(
+            LiveUpdateSessionState(
+                sessionId = "session-old",
+                activityType = LiveUpdateActivityType.TRAVEL,
+                contentIdentifier = "torn-1700",
+                startedAtMs = 1L,
+                lastUpdatedAtMs = 1L,
+                lastHasArrived = false,
+            ),
+        )
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "unused" }
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        val result = manager.startOrUpdate(payload())
+
+        assertEquals("session-old", result.sessionId)
+        assertEquals(1, adapter.startCalls)
+    }
+
+    @Test
+    fun watchOnlySessionNeverDedups() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        // Same content and hasArrived: without the guard this would dedup
+        sessionStore.markActive(watchOnlySession("session-watch", hasArrived = false))
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "unused" }
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        manager.startOrUpdate(payload())
+
+        assertEquals("a watch-only session has no card, so the adapter must post one", 1, adapter.startCalls)
     }
 
     @Test
@@ -61,7 +118,7 @@ class DefaultLiveUpdateManagerTest {
         val eligibility = FakeEligibilityProvider(successResult())
         val adapter = RecordingAdapter()
         val sessionStore = RecordingSessionStore()
-        val manager = DefaultLiveUpdateManager(adapter, eligibility, sessionStore) { "session-end" }
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-end" }
         val listener = RecordingListener()
         manager.addListener(listener)
 
@@ -80,7 +137,7 @@ class DefaultLiveUpdateManagerTest {
         val eligibility = FakeEligibilityProvider(successResult())
         val adapter = RecordingAdapter()
         val sessionStore = RecordingSessionStore()
-        val manager = DefaultLiveUpdateManager(adapter, eligibility, sessionStore) { "session-timeout" }
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-timeout" }
 
         adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
         manager.startOrUpdate(payload())
@@ -91,11 +148,83 @@ class DefaultLiveUpdateManagerTest {
         assertFalse(sessionStore.isActive())
     }
 
-    private fun payload(): Map<String, Any?> {
+    @Test
+    fun startWithIdenticalTravelStateSkipsAdapter() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-dedup" }
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        manager.startOrUpdate(payload(hasArrived = false))
+        assertEquals(1, adapter.startCalls)
+
+        // Second identical call — same trip, same state (en-route)
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.UPDATED)
+        val result = manager.startOrUpdate(payload(hasArrived = false))
+        assertEquals(LiveUpdateRequestStatus.UPDATED, result.status)
+        assertEquals("session-dedup", result.sessionId)
+        // Adapter must NOT be called again
+        assertEquals(1, adapter.startCalls)
+    }
+
+    @Test
+    fun startTransitionToArrivedCallsAdapter() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-arrive" }
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        manager.startOrUpdate(payload(hasArrived = false))
+        assertEquals(1, adapter.startCalls)
+
+        // Transition to arrived — adapter MUST be called
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.UPDATED)
+        manager.startOrUpdate(payload(hasArrived = true))
+        assertEquals(2, adapter.startCalls)
+    }
+
+    @Test
+    fun startWithDifferentTripCallsAdapter() {
+        val eligibility = FakeEligibilityProvider(successResult())
+        val adapter = RecordingAdapter()
+        val sessionStore = RecordingSessionStore()
+        val manager = DefaultLiveUpdateManager(LiveUpdateActivityType.TRAVEL, adapter, eligibility, sessionStore) { "session-trips" }
+
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        manager.startOrUpdate(payload(travelIdentifier = "trip-A"))
+        assertEquals(1, adapter.startCalls)
+
+        // Different trip — adapter MUST be called
+        adapter.nextResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.UPDATED)
+        manager.startOrUpdate(payload(travelIdentifier = "trip-B"))
+        assertEquals(2, adapter.startCalls)
+    }
+
+    private fun watchOnlySession(
+        sessionId: String,
+        hasArrived: Boolean = true,
+        travelIdentifier: String = "torn-1700",
+    ) = LiveUpdateSessionState(
+        sessionId = sessionId,
+        activityType = LiveUpdateActivityType.TRAVEL,
+        contentIdentifier = travelIdentifier,
+        startedAtMs = 1L,
+        lastUpdatedAtMs = 1L,
+        lastHasArrived = hasArrived,
+        watchOnly = true,
+    )
+
+    private fun payload(
+        hasArrived: Boolean = false,
+        travelIdentifier: String = "torn-1700",
+    ): Map<String, Any?> {
         return mapOf(
             "arrivalTimeTimestamp" to 1700L,
             "departureTimeTimestamp" to 1600L,
-            "travelIdentifier" to "torn-1700",
+            "travelIdentifier" to travelIdentifier,
+            "hasArrived" to hasArrived,
         )
     }
 
@@ -119,9 +248,11 @@ class DefaultLiveUpdateManagerTest {
         var endCalls = 0
         var adapterListener: LiveUpdateAdapterListener? = null
         var nextResult: LiveUpdateAdapterResult = LiveUpdateAdapterResult(LiveUpdateRequestStatus.STARTED)
+        var lastPayload: LiveUpdatePayload? = null
 
         override fun startOrUpdate(sessionId: String, payload: LiveUpdatePayload): LiveUpdateAdapterResult {
             startCalls += 1
+            lastPayload = payload
             return nextResult
         }
 
@@ -161,7 +292,8 @@ class DefaultLiveUpdateManagerTest {
 
         override fun current(): LiveUpdateSessionState? = state
 
-        override fun isActive(): Boolean = state != null
+        // Same rule as LiveUpdateSessionRegistry: a watch-only session has no card
+        override fun isActive(): Boolean = state?.watchOnly == false
     }
 
     private class RecordingListener : LiveUpdateManagerListener {

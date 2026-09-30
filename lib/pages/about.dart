@@ -392,6 +392,8 @@ class AboutPageState extends State<AboutPage> {
                 _profileLink('Kwack', '2190604'),
                 const TextSpan(text: ', '),
                 _profileLink('Mavri', '2402357'),
+                const TextSpan(text: ', '),
+                _profileLink('DarXide', '4059250'),
               ]),
               _contributorLine('Partners: ', [
                 _profileLink('Kivou', '2000607'),
@@ -425,18 +427,38 @@ class AboutPageState extends State<AboutPage> {
                 ),
                 const TextSpan(text: ' (foreign stocks)'),
               ]),
-              _contributorLine('Code contributions: ', [
+              _contributorLine('Code contributions:', []),
+              _contributorLine('  • ', [
                 _profileLink('bombel', '2362436'),
-                const TextSpan(text: ' (Android Live Updates), '),
+                const TextSpan(text: ': Android Live Updates'),
+              ]),
+              _contributorLine('  • ', [
                 _profileLink('Knoxby', '2503189'),
-                const TextSpan(text: ' (JS cross-origin API), '),
+                const TextSpan(text: ': JS cross-origin API'),
+              ]),
+              _contributorLine('  • ', [
                 _profileLink('tiksan', '2383326'),
-                const TextSpan(text: ' (JS handlers), '),
+                const TextSpan(text: ': JS handlers'),
+              ]),
+              _contributorLine('  • ', [
                 _profileLink('Tenren', '3373820'),
-                const TextSpan(text: ', '),
+                const TextSpan(text: ': level calculation fix'),
+              ]),
+              _contributorLine('  • ', [
                 _profileLink('TheProgrammer', '2782979'),
-                const TextSpan(text: ', '),
+                const TextSpan(text: ': ToS table'),
+              ]),
+              _contributorLine('  • ', [
                 _profileLink('HangingLow', '3128897'),
+                const TextSpan(text: ': flight notifications'),
+              ]),
+              _contributorLine('  • ', [
+                _profileLink('OneMind', '3608257'),
+                const TextSpan(text: ': config templates & build docs'),
+              ]),
+              _contributorLine('  • ', [
+                _profileLink('xentac', '3354782'),
+                const TextSpan(text: ': userscript storage & recovery'),
               ]),
               const Align(
                 alignment: Alignment.bottomLeft,
@@ -444,6 +466,14 @@ class AboutPageState extends State<AboutPage> {
                   padding: EdgeInsets.fromLTRB(30, 0, 30, 10),
                   child: Text('Thank you to our partners, who chose Torn PDA as their mobile '
                       'interface: YATA, FFScouter and many reviving providers.'),
+                ),
+              ),
+              const Align(
+                alignment: Alignment.bottomLeft,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(30, 0, 30, 10),
+                  child: Text('The Trade Calculator also supports external pricing workflows such as '
+                      'Torn Exchange and TornW3B.'),
                 ),
               ),
               const Align(

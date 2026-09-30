@@ -25,6 +25,7 @@ import 'package:torn_pda/models/oc/ts_members_model.dart';
 import 'package:torn_pda/models/profile/own_profile_basic.dart';
 import 'package:torn_pda/pages/profile/shortcuts_page.dart';
 import 'package:torn_pda/pages/settings/alternative_keys_page.dart';
+import 'package:torn_pda/pages/settings/drawer_sections_page.dart';
 import 'package:torn_pda/widgets/player_notes_list_dialog.dart';
 import 'package:torn_pda/widgets/settings/backup_local/prefs_backup_section.dart';
 import 'package:torn_pda/pages/settings/settings_browser.dart';
@@ -49,6 +50,7 @@ import 'package:torn_pda/utils/notification.dart';
 import 'package:torn_pda/utils/alarm_kit_service_ios.dart';
 import 'package:torn_pda/utils/time_formatter.dart';
 import 'package:torn_pda/models/chaining/war_settings.dart';
+import 'package:torn_pda/models/drawer_section.dart';
 import 'package:torn_pda/providers/war_controller.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 import 'package:torn_pda/widgets/alerts/discreet_info.dart';
@@ -64,6 +66,7 @@ import 'package:torn_pda/widgets/settings/reviving_services_dialog.dart';
 import 'package:torn_pda/widgets/spies/spies_management_dialog.dart';
 import 'package:torn_pda/widgets/stats/ffscouter_info.dart';
 import 'package:torn_pda/providers/ffscouter_cache_controller.dart';
+import 'package:torn_pda/providers/ffscouter_premium_controller.dart';
 import 'package:torn_pda/widgets/pda_browser_icon.dart';
 import 'package:vibration/vibration.dart';
 
@@ -964,35 +967,38 @@ class SettingsPageState extends State<SettingsPage> {
                               detailsText = null; // Avoid repeating the scheduled time twice
                             }
 
-                            return ListTile(
-                              leading: CircleAvatar(
-                                radius: 18,
-                                backgroundColor: Colors.green[700],
-                                child: const Icon(Icons.notifications_active, color: Colors.white, size: 18),
-                              ),
-                              title: Text(display.label),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (timeString.isNotEmpty)
-                                    Text(
-                                      timeString,
-                                      style: const TextStyle(fontWeight: FontWeight.w600),
-                                    ),
-                                  if (detailsText != null)
-                                    Text(
-                                      detailsText,
-                                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                                    ),
-                                ],
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () async {
-                                  await AlarmKitServiceIos.cancelAlarm(alarm['id']);
-                                  _refreshIosAlarms();
-                                },
+                            return Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor: Colors.green[700],
+                                  child: const Icon(Icons.notifications_active, color: Colors.white, size: 18),
+                                ),
+                                title: Text(display.label),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (timeString.isNotEmpty)
+                                      Text(
+                                        timeString,
+                                        style: const TextStyle(fontWeight: FontWeight.w600),
+                                      ),
+                                    if (detailsText != null)
+                                      Text(
+                                        detailsText,
+                                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                      ),
+                                  ],
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () async {
+                                    await AlarmKitServiceIos.cancelAlarm(alarm['id']);
+                                    _refreshIosAlarms();
+                                  },
+                                ),
                               ),
                             );
                           }).toList(),
@@ -1363,6 +1369,43 @@ class SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  void _showFFScouterPremiumFeaturesDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("FFScouter premium features", style: TextStyle(fontSize: 16)),
+          content: GetBuilder<FFScouterPremiumController>(
+            builder: (p) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text("Stat distribution"),
+                  value: p.distributionEnabled,
+                  onChanged: (v) => p.distributionEnabled = v,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text("Travel / landing timers"),
+                  value: p.flightsEnabled,
+                  onChanged: (v) => p.flightsEnabled = v,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text("Activity tracker"),
+                  value: p.activityEnabled,
+                  onChanged: (v) => p.activityEnabled = v,
+                ),
+              ],
+            ),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Close"))],
+        );
+      },
+    );
+  }
+
   Widget _statsSection() {
     List<SearchableRow> rows = [];
 
@@ -1462,6 +1505,47 @@ class SettingsPageState extends State<SettingsPage> {
       );
     }
 
+    // FFScouter premium features, opened via a sync/check
+    if (_settingsProvider.ffScouterEnabledStatusRemoteConfig && _settingsProvider.ffScouterEnabledStatus == 1) {
+      rows.add(
+        SearchableRow(
+          label: "FFScouter premium features",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 20, top: 0, right: 20, bottom: 5),
+            child: GetBuilder<FFScouterPremiumController>(
+              builder: (ffsPremium) => Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("FFScouter premium features")),
+                  if (ffsPremium.isPremium)
+                    OutlinedButton.icon(
+                      onPressed: _showFFScouterPremiumFeaturesDialog,
+                      icon: const Icon(Icons.tune, size: 16),
+                      label: const Text("Select"),
+                    )
+                  else
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await ffsPremium.refreshPremiumStatus(force: true);
+                        if (!mounted) return;
+                        if (ffsPremium.isPremium) {
+                          _showFFScouterPremiumFeaturesDialog();
+                        } else {
+                          BotToast.showText(text: "No active FFScouter premium found for your key");
+                        }
+                      },
+                      icon: const Icon(Icons.sync, size: 16),
+                      label: const Text("SYNC"),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     // FFScouter: prefer BS estimates over range-based estimates
     if (_settingsProvider.ffScouterEnabledStatusRemoteConfig && _settingsProvider.ffScouterEnabledStatus == 1) {
       rows.add(
@@ -1486,6 +1570,9 @@ class SettingsPageState extends State<SettingsPage> {
                           _settingsProvider.preferFFScouterOverEstimated = enabled;
                           if (!enabled) {
                             Get.find<FFScouterCacheController>().clearCache();
+                          }
+                          if (Get.isRegistered<WarController>()) {
+                            Get.find<WarController>().reloadFFScouterSettings();
                           }
                         });
                       },
@@ -1529,6 +1616,9 @@ class SettingsPageState extends State<SettingsPage> {
                     onChanged: (value) {
                       setState(() {
                         _settingsProvider.ffsOverrideSpyMonths = value.round();
+                        if (Get.isRegistered<WarController>()) {
+                          Get.find<WarController>().reloadFFScouterSettings();
+                        }
                       });
                     },
                   ),
@@ -1759,7 +1849,8 @@ class SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Text("Choose reviving providers"),
                   IconButton(
-                    icon: const Icon(Icons.keyboard_arrow_right_outlined),
+                    icon: const Icon(MdiIcons.hospitalBoxOutline),
+                    color: _themeProvider.getTextColor(Colors.red.shade600),
                     onPressed: () {
                       showDialog(
                         useRootNavigator: false,
@@ -2311,6 +2402,31 @@ class SettingsPageState extends State<SettingsPage> {
         ),
       ),
       SearchableRow(
+        label: "Drawer sections",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 20, top: 10, right: 20, bottom: 5),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Flexible(child: Text("Drawer sections")),
+              Flexible(
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (BuildContext context) => DrawerSectionsPage(),
+                      ),
+                    );
+                  },
+                  child: const Text("Configure"),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      SearchableRow(
         label: "Back button exits app",
         searchText: _searchText,
         child: Padding(
@@ -2326,37 +2442,6 @@ class SettingsPageState extends State<SettingsPage> {
               ),
               Text(
                 "This will only have effect on certain devices, depending on your configuration. Dictates how to proceed when the app detects a back button press or swipe that would otherwise close the app. Note: in the browser, the back button always triggers backwards navigation",
-                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-              )
-            ],
-          ),
-        ),
-      ),
-      SearchableRow(
-        label: "Show Wiki",
-        searchText: _searchText,
-        child: Padding(
-          padding: const EdgeInsets.only(left: 20, top: 10, right: 20, bottom: 5),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Flexible(child: Text("Show Wiki")),
-                  Switch(
-                    value: _settingsProvider.showWikiInDrawer,
-                    onChanged: (value) {
-                      setState(() {
-                        _settingsProvider.showWikiInDrawer = value;
-                      });
-                    },
-                    activeTrackColor: Colors.lightGreenAccent,
-                    activeThumbColor: Colors.green,
-                  ),
-                ],
-              ),
-              Text(
-                "If enabled, you will have quick access to the Torn wiki from the app drawer menu",
                 style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               )
             ],
@@ -3334,8 +3419,8 @@ class SettingsPageState extends State<SettingsPage> {
   DropdownButton _openSectionDropdown() {
     return DropdownButton<String>(
       value: _openSectionValue,
-      items: const [
-        DropdownMenuItem(
+      items: [
+        const DropdownMenuItem(
           value: "browser",
           child: SizedBox(
             width: 80,
@@ -3346,7 +3431,7 @@ class SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        DropdownMenuItem(
+        const DropdownMenuItem(
           value: "browser_full",
           child: SizedBox(
             width: 80,
@@ -3357,110 +3442,19 @@ class SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        DropdownMenuItem(
-          value: "0",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Profile",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
+        ...DrawerSection.values.map((section) {
+          return DropdownMenuItem(
+            value: section.name,
+            child: SizedBox(
+              width: 80,
+              child: Text(
+                section.title,
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 14),
               ),
             ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "1",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Travel",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "2",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Chaining",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "3",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Loot",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "4",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Friends",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "5",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Stakeouts",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "6",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Awards",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        DropdownMenuItem(
-          value: "7",
-          child: SizedBox(
-            width: 80,
-            child: Text(
-              "Items",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
+          );
+        }),
       ],
       onChanged: (value) {
         Prefs().setDefaultSection(value!);
@@ -4146,8 +4140,14 @@ class SettingsPageState extends State<SettingsPage> {
     }
 
     await Prefs().getDefaultSection().then((onValue) {
+      // Migrate old numeric default section to symbolic names
+      String migrated = onValue;
+      final numericTry = int.tryParse(onValue);
+      if (numericTry != null) {
+        migrated = DrawerSection.fromIndex(numericTry).name;
+      }
       setState(() {
-        _openSectionValue = onValue;
+        _openSectionValue = migrated;
       });
     });
 
@@ -4292,6 +4292,19 @@ class SettingsPageState extends State<SettingsPage> {
             width: 67,
             child: Text(
               "Grid",
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
+        DropdownMenuItem(
+          value: "gridcarousel",
+          child: SizedBox(
+            width: 100,
+            child: Text(
+              "Grid carousel",
               textAlign: TextAlign.right,
               style: TextStyle(
                 fontSize: 14,

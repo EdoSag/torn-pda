@@ -68,7 +68,7 @@ There are many more features available, but listing them all would be too long. 
 
 ## Contribute
 
-We welcome contributions at different levels!
+We welcome contributions at different levels! See [CONTRIBUTING.md](CONTRIBUTING.md) for developer setup, testing, and PR guidelines.
 
 - **Developers**: Since Torn PDA is an open-source project, we invite developers to contribute. Join us on [Discord](https://discord.gg/vyP23kJ) to discuss how you can help. The app is open source, but you might need some assistance to set it up the first time, and we're here to guide you. Feel free to raise issues and/or fork the app, work with it and submit a PR if you have a suggestion.
 
@@ -103,6 +103,7 @@ If you want to build the app from a fork, see the [Building from Source](docs/RE
 - [**Tenren**](https://www.torn.com/profiles.php?XID=3373820): Player level calculation fix
 - [**TheProgrammer**](https://www.torn.com/profiles.php?XID=2782979): Torn ToS table in Settings
 - [**HangingLow**](https://www.torn.com/profiles.php?XID=3128897): Flight notification fixes
+- [**OneMind**](https://www.torn.com/profiles.php?XID=3608257): Config templates and build documentation for developers
 
 ### Partners
 

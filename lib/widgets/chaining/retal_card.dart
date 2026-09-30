@@ -82,7 +82,7 @@ class RetalCardState extends State<RetalCard> {
   @override
   Widget build(BuildContext context) {
     _retal = widget.retalModel;
-    _themeProvider = Provider.of<ThemeProvider>(context);
+    _themeProvider = Provider.of<ThemeProvider>(context, listen: false);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5),
@@ -176,7 +176,7 @@ class RetalCardState extends State<RetalCard> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      _returnRespectFF(_retal!.respectGain, _retal!.fairFight),
+                      _returnRespectFF(_retal!.respectGain, _r.getEffectiveFairFight(_retal!)),
                       if (!_retal!.overrideEasyLife) _returnEasyHealth(_retal) else _returnFullHealth(_retal),
                     ],
                   ),
@@ -673,13 +673,13 @@ class RetalCardState extends State<RetalCard> {
                 Padding(
                   padding: const EdgeInsets.only(right: 3),
                   child: RotatedBox(
-                    quarterTurns: _retal!.status.description!.contains('Traveling to ')
-                        ? 1 // If traveling to another country
-                        : _retal!.status.description!.contains('Returning ')
-                            ? 3 // If returning to Torn
-                            : 0, // If staying abroad (blue but not moving)
+                    quarterTurns: switch (getTravelDirection(description: _retal!.status.description)) {
+                      TravelDirection.outbound => 1, // If traveling to another country
+                      TravelDirection.returning => 3, // If returning to Torn
+                      TravelDirection.none => 0, // If staying abroad (blue but not moving)
+                    },
                     child: Icon(
-                      _retal!.status.description!.contains('In ')
+                      isAtLocation(description: _retal!.status.description)
                           ? Icons.location_city_outlined
                           : Icons.airplanemode_active,
                       color: Colors.blue,
@@ -1278,10 +1278,15 @@ class RetalCardState extends State<RetalCard> {
     final browserType = _settingsProvider.currentBrowser;
     switch (browserType) {
       case BrowserSetting.app:
-        List<RetalsCardDetails> myTargetList = _r.orderedCardsDetails;
+        final List<RetalsCardDetails> myTargetList = List<RetalsCardDetails>.from(_r.orderedCardsDetails);
 
         // Adjust the list (remove targets above the one selected)
-        myTargetList.removeRange(0, myTargetList.indexWhere((element) => element.retalId == _retal!.retalId));
+        final int selectedIndex = myTargetList.indexWhere((element) => element.retalId == _retal!.retalId);
+        if (selectedIndex > 0) {
+          myTargetList.removeRange(0, selectedIndex);
+        } else if (selectedIndex == -1) {
+          myTargetList.clear();
+        }
 
         List<String> attacksIds = <String>[];
         List<String?> attacksNames = <String?>[];
@@ -1294,6 +1299,13 @@ class RetalCardState extends State<RetalCard> {
           attacksNotesColor.add(tar.personalNoteColor);
         }
 
+        if (attacksIds.isEmpty) {
+          attacksIds.add(_retal!.retalId.toString());
+          attacksNames.add(_retal!.name);
+          attackNotes.add(_retal!.personalNote);
+          attacksNotesColor.add(_retal!.personalNoteColor);
+        }
+
         final bool showNotes = await Prefs().getShowTargetsNotes();
         final bool showBlankNotes = await Prefs().getShowBlankTargetsNotes();
         final bool showOnlineFactionWarning = await Prefs().getShowOnlineFactionWarning();
@@ -1301,7 +1313,7 @@ class RetalCardState extends State<RetalCard> {
         _r.browserIsOpen = true;
         await _webViewProvider.openBrowserPreference(
           context: context,
-          url: 'https://www.torn.com/loader.php?sid=attack&user2ID=${attacksIds[0]}',
+          url: 'https://www.torn.com/page.php?sid=attack&user2ID=${attacksIds[0]}',
           browserTapType: BrowserTapType.chainShort,
           isChainingBrowser: true,
           chainingPayload: ChainingPayload()
@@ -1317,7 +1329,7 @@ class RetalCardState extends State<RetalCard> {
         _r.browserIsOpen = false;
 
       case BrowserSetting.external:
-        final url = 'https://www.torn.com/loader.php?sid=attack&user2ID=${_retal!.retalId}';
+        final url = 'https://www.torn.com/page.php?sid=attack&user2ID=${_retal!.retalId}';
         if (await canLaunchUrl(Uri.parse(url))) {
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
         }

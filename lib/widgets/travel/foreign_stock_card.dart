@@ -1,10 +1,8 @@
-// Dart imports:
 import 'dart:async';
 import "dart:collection";
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
-import 'dart:math' as math;
 
 // Package imports:
 import 'package:bot_toast/bot_toast.dart';
@@ -12,6 +10,7 @@ import 'package:expandable/expandable.dart';
 import 'package:fl_chart/fl_chart.dart';
 // Flutter imports:
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
@@ -41,6 +40,7 @@ class ForeignStockCard extends StatefulWidget {
   final Function flagPressedCallback;
   final Function requestMoneyRefresh;
   final Function(ForeignStock) memberHiddenCallback;
+  final Function(ForeignStock) memberBlacklistCallback;
   final TravelTicket? ticket;
   final Map<String, dynamic>? activeRestocks;
   final String? providerName;
@@ -62,6 +62,7 @@ class ForeignStockCard extends StatefulWidget {
     required this.flagPressedCallback,
     required this.requestMoneyRefresh,
     required this.memberHiddenCallback,
+    required this.memberBlacklistCallback,
     required this.ticket,
     required this.activeRestocks,
     required this.travelingTimeStamp,
@@ -78,6 +79,8 @@ class ForeignStockCard extends StatefulWidget {
 }
 
 class ForeignStockCardState extends State<ForeignStockCard> {
+  static const _restockSoonMaxAverage = Duration(hours: 5);
+
   final _expandableController = ExpandableController();
 
   Future? _footerInformationRetrieved;
@@ -89,6 +92,8 @@ class ForeignStockCardState extends State<ForeignStockCard> {
   var _averageTimeToRestock = 0;
   var _restockReliability = 0;
   var _projectedRestockDateTime = DateTime.now();
+  var _hasProjectedRestockDateTime = false;
+  var _restockExpectedSoon = false;
   var _depletionTrendPerSecond = 0.0;
 
   int? _invQuantity = 0;
@@ -166,11 +171,47 @@ class ForeignStockCardState extends State<ForeignStockCard> {
     super.dispose();
   }
 
+  ({DateTime dateTime, bool expectedSoon}) _nextProjectedRestockDateTime(DateTime lastEmptyDateTime) {
+    final now = DateTime.now();
+    final averageDuration = Duration(seconds: _averageTimeToRestock);
+    var projected = lastEmptyDateTime.add(averageDuration);
+
+    if (!projected.isAfter(now)) {
+      final soonCutoff = projected.add(Duration(seconds: _averageTimeToRestock ~/ 2));
+      if (averageDuration < _restockSoonMaxAverage && now.isBefore(soonCutoff)) {
+        return (dateTime: projected, expectedSoon: true);
+      }
+
+      final elapsedSeconds = now.difference(lastEmptyDateTime).inSeconds;
+      final intervalsToSkip = elapsedSeconds ~/ _averageTimeToRestock + 1;
+      projected = lastEmptyDateTime.add(
+        Duration(seconds: _averageTimeToRestock * intervalsToSkip),
+      );
+    }
+
+    return (dateTime: projected, expectedSoon: false);
+  }
+
+  String _projectedRestockText() {
+    if (!_hasProjectedRestockDateTime ||
+        _projectedRestockDateTime.isAfter(DateTime.now().add(const Duration(days: 7)))) {
+      return 'unknown';
+    }
+
+    if (_restockExpectedSoon) return 'anytime soon';
+
+    return TimeFormatter(
+      inputTime: _projectedRestockDateTime,
+      timeFormatSetting: _settingsProvider.currentTimeFormat,
+      timeZoneSetting: _settingsProvider.currentTimeZone,
+    ).formatHourWithDaysElapsed(includeToday: true);
+  }
+
   @override
   Widget build(BuildContext context) {
     return ShowCaseWidget(
-      builder: (_) {
-        _launchShowCases(_);
+      builder: (ctx) {
+        _launchShowCases(ctx);
         return Slidable(
           startActionPane: ActionPane(
             motion: const DrawerMotion(),
@@ -181,6 +222,14 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                 icon: MdiIcons.eyeRemoveOutline,
                 onPressed: (context) {
                   widget.memberHiddenCallback(widget.foreignStock);
+                },
+              ),
+              SlidableAction(
+                label: 'Blacklist',
+                backgroundColor: Colors.red[700]!,
+                icon: MdiIcons.closeOctagonOutline,
+                onPressed: (context) {
+                  widget.memberBlacklistCallback(widget.foreignStock);
                 },
               ),
             ],
@@ -230,7 +279,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
     );
   }
 
-  Future<void> _launchShowCases(BuildContext _) async {
+  Future<void> _launchShowCases(BuildContext ctx) async {
     if (!widget.displayShowcase) return;
     await Future.delayed(const Duration(seconds: 1), () async {
       if (!mounted) return;
@@ -258,7 +307,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       }
 
       if (showCases.isNotEmpty) {
-        ShowCaseWidget.of(_).startShowCase(showCases as List<GlobalKey<State<StatefulWidget>>>);
+        ShowCaseWidget.of(ctx).startShowCase(showCases as List<GlobalKey<State<StatefulWidget>>>);
       }
     });
   }
@@ -477,14 +526,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                               ),
                             ),
                             Text(
-                              _projectedRestockDateTime.isAfter(DateTime.now().add(const Duration(days: 7))) ||
-                                      _projectedRestockDateTime.isBefore(DateTime.now().toLocal())
-                                  ? 'unknown'
-                                  : TimeFormatter(
-                                      inputTime: _projectedRestockDateTime,
-                                      timeFormatSetting: _settingsProvider.currentTimeFormat,
-                                      timeZoneSetting: _settingsProvider.currentTimeZone,
-                                    ).formatHourWithDaysElapsed(includeToday: true),
+                              _projectedRestockText(),
                               style: TextStyle(
                                 fontSize: 12,
                                 color: reliabilityColor,
@@ -514,6 +556,17 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                   ),
                   if (widget.showBarsCooldownAnalysis) _affectedBars(),
                   const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _chartRangeDescription(),
+                      style: TextStyle(
+                        color: _themeProvider.mainText.withAlpha(180),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   SizedBox(
                     height: 200,
                     width: 600,
@@ -772,12 +825,14 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         ],
       );
     } else {
+      final requiredTotal = stock.cost! * widget.capacity!;
+      final missingAmount = requiredTotal - widget.profile!.moneyOnHand!;
       final howMany = (widget.profile!.moneyOnHand! / stock.cost!).floor();
       final String howManyString = howMany == 0 ? "cannot buy a single" : "can only buy $howMany";
       moneyToBuy = 'You $howManyString ${stock.name} with the money you have.';
       moneyToBuyExtra = 'You need '
-          '\$${costCurrency.format((stock.cost! * widget.capacity!) - widget.profile!.moneyOnHand!)} more '
-          '(a total of \$${costCurrency.format(stock.cost! * widget.capacity!)}) to buy ${widget.capacity}.';
+          '\$${costCurrency.format(missingAmount)} more '
+          '(a total of \$${costCurrency.format(requiredTotal)}) to buy ${widget.capacity}.';
       moneyToBuyColor = Colors.orange[800];
       costWidget = Row(
         children: [
@@ -822,14 +877,30 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                           ),
                           const SizedBox(height: 10),
                           GestureDetector(
-                            child: Image.asset(
-                              'images/icons/home/vault.png',
-                              width: 40,
-                              height: 40,
-                              color: Colors.white,
+                            child: const Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: Image(
+                                    image: AssetImage('images/icons/home/vault.png'),
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(height: 6),
+                                Text(
+                                  'Open Vault',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
                             onTap: () {
-                              _openWalletDialog();
+                              _openWalletDialog(requiredTotal: requiredTotal, missingAmount: missingAmount);
                             },
                           ),
                         ],
@@ -1110,7 +1181,13 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       // TIMES TO RESTOCK
       final lastEmpty = firestoreData.get('lastEmpty');
       final lastEmptyDateTime = DateTime.fromMillisecondsSinceEpoch(lastEmpty * 1000);
-      _projectedRestockDateTime = lastEmptyDateTime.add(Duration(seconds: _averageTimeToRestock));
+      _hasProjectedRestockDateTime = _averageTimeToRestock > 0 && lastEmpty > 0;
+      _restockExpectedSoon = false;
+      if (_hasProjectedRestockDateTime) {
+        final projectedRestock = _nextProjectedRestockDateTime(lastEmptyDateTime);
+        _projectedRestockDateTime = projectedRestock.dateTime;
+        _restockExpectedSoon = projectedRestock.expectedSoon;
+      }
 
       // CURRENT DEPLETION TREND
       if (widget.foreignStock.quantity! > 0) {
@@ -1152,10 +1229,130 @@ class ForeignStockCardState extends State<ForeignStockCard> {
     }
   }
 
+  /// Helper to build a single bar/cooldown check widget
+  /// Returns a tuple of (widget, wasAffected) where wasAffected is true if the bar/cooldown
+  /// will be ready before the return time
+  ({Widget widget, bool affected}) _buildBarCheck({
+    required int fulltime,
+    required DateTime returnTime,
+    required String labelFull,
+    required String labelOk,
+    required String labelWillBeFull,
+  }) {
+    final DateTime readyTime = DateTime.now().add(Duration(seconds: fulltime));
+    
+    if (readyTime.isBefore(returnTime)) {
+      final Duration gap = returnTime.difference(readyTime);
+      String message;
+      if (fulltime == 0 || readyTime.isBefore(DateTime.now())) {
+        message = labelFull;
+      } else if (gap.inHours > 24) {
+        message = "$labelWillBeFull more than a day before your return";
+      } else {
+        message = "$labelWillBeFull ${_formatDuration(gap)} before your return";
+      }
+      
+      return (
+        widget: Padding(
+          padding: const EdgeInsets.only(left: 5),
+          child: Text(
+            message,
+            style: TextStyle(
+              color: _themeProvider.getTextColor(Colors.orange),
+              fontSize: 12,
+            ),
+          ),
+        ),
+        affected: true,
+      );
+    } else {
+      return (
+        widget: Padding(
+          padding: const EdgeInsets.only(left: 5),
+          child: Text(
+            labelOk,
+            style: TextStyle(
+              color: _themeProvider.getTextColor(Colors.green),
+              fontSize: 12,
+            ),
+          ),
+        ),
+        affected: false,
+      );
+    }
+  }
+
+  /// Builds all bar/cooldown check widgets for a given return time
+  /// Returns list of widgets and whether any affectation was found
+  ({List<Widget> widgets, bool anyAffected}) _buildAllBarChecks({
+    required DateTime returnTime,
+    required bool showOkStatus,
+  }) {
+    final List<Widget> widgets = [];
+    bool anyAffected = false;
+
+    // Energy
+    final energy = _buildBarCheck(
+      fulltime: widget.profile!.energy!.fulltime!,
+      returnTime: returnTime,
+      labelFull: "- Energy is full",
+      labelOk: "- Energy OK",
+      labelWillBeFull: "- Energy will be full",
+    );
+    if (energy.affected || showOkStatus) widgets.add(energy.widget);
+    anyAffected = anyAffected || energy.affected;
+
+    // Nerve
+    final nerve = _buildBarCheck(
+      fulltime: widget.profile!.nerve!.fulltime!,
+      returnTime: returnTime,
+      labelFull: "- Nerve is full",
+      labelOk: "- Nerve OK",
+      labelWillBeFull: "- Nerve will be full",
+    );
+    if (nerve.affected || showOkStatus) widgets.add(nerve.widget);
+    anyAffected = anyAffected || nerve.affected;
+
+    // Drug cooldown
+    final drug = _buildBarCheck(
+      fulltime: widget.profile!.cooldowns!.drug!,
+      returnTime: returnTime,
+      labelFull: "- No drug cooldown",
+      labelOk: "- Drug cooldown OK",
+      labelWillBeFull: "- Drug cooldown will be over",
+    );
+    if (drug.affected || showOkStatus) widgets.add(drug.widget);
+    anyAffected = anyAffected || drug.affected;
+
+    // Medical cooldown
+    final medical = _buildBarCheck(
+      fulltime: widget.profile!.cooldowns!.medical!,
+      returnTime: returnTime,
+      labelFull: "- No medical cooldown",
+      labelOk: "- Medical cooldown OK",
+      labelWillBeFull: "- Medical cooldown will be over",
+    );
+    if (medical.affected || showOkStatus) widgets.add(medical.widget);
+    anyAffected = anyAffected || medical.affected;
+
+    // Booster cooldown
+    final booster = _buildBarCheck(
+      fulltime: widget.profile!.cooldowns!.booster!,
+      returnTime: returnTime,
+      labelFull: "- No booster cooldown",
+      labelOk: "- Booster cooldown OK",
+      labelWillBeFull: "- Booster cooldown will be over",
+    );
+    if (booster.affected || showOkStatus) widgets.add(booster.widget);
+    anyAffected = anyAffected || booster.affected;
+
+    return (widgets: widgets, anyAffected: anyAffected);
+  }
+
   Widget _affectedBars() {
     List<Widget> affected = <Widget>[];
-    List<Widget> affectedDelayed = <Widget>[];
 
+    // Immediate departure section
     affected.add(
       const Text(
         "Bars/cooldowns (immediate departure):",
@@ -1165,184 +1362,13 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       ),
     );
 
-    bool anyAffectation = false;
+    final immediateChecks = _buildAllBarChecks(
+      returnTime: _earliestBackToTorn,
+      showOkStatus: true,
+    );
+    affected.addAll(immediateChecks.widgets);
 
-    final DateTime energyTime = DateTime.now().add(Duration(seconds: widget.profile!.energy!.fulltime!));
-    if (energyTime.isBefore(_earliestBackToTorn)) {
-      anyAffectation = true;
-      final Duration energyGap = _earliestBackToTorn.difference(energyTime);
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            widget.profile!.energy!.fulltime! == 0 || energyTime.isBefore(DateTime.now())
-                ? "- Energy is full"
-                : energyGap.inHours > 24
-                    ? "- Energy will be full more than a day before your return"
-                    : "- Energy will be full ${_formatDuration(energyGap)} before your return",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.orange),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    } else {
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            "- Energy OK",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.green),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final DateTime nerveTime = DateTime.now().add(Duration(seconds: widget.profile!.nerve!.fulltime!));
-    if (nerveTime.isBefore(_earliestBackToTorn)) {
-      anyAffectation = true;
-      final Duration nerveGap = _earliestBackToTorn.difference(nerveTime);
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            widget.profile!.nerve!.fulltime! == 0 || nerveTime.isBefore(DateTime.now())
-                ? "- Nerve is full"
-                : nerveGap.inHours > 24
-                    ? "- Nerve will be full more than a day before your return"
-                    : "- Nerve will be full ${_formatDuration(nerveGap)} before your return",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.orange),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    } else {
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            "- Nerve OK",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.green),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final DateTime drugsTime = DateTime.now().add(Duration(seconds: widget.profile!.cooldowns!.drug!));
-    if (drugsTime.isBefore(_earliestBackToTorn)) {
-      anyAffectation = true;
-      final Duration drugsGap = _earliestBackToTorn.difference(drugsTime);
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            widget.profile!.cooldowns!.drug! == 0 || drugsTime.isBefore(DateTime.now())
-                ? "- No drug cooldown"
-                : drugsGap.inHours > 24
-                    ? "- Drug cooldown will be over more than a day before your return"
-                    : "- Drug cooldown will be over ${_formatDuration(drugsGap)} before your return",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.orange),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    } else {
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            "- Drug cooldown OK",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.green),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final DateTime medicalTime = DateTime.now().add(Duration(seconds: widget.profile!.cooldowns!.medical!));
-    if (medicalTime.isBefore(_earliestBackToTorn)) {
-      anyAffectation = true;
-      final Duration medicalGap = _earliestBackToTorn.difference(medicalTime);
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            widget.profile!.cooldowns!.medical! == 0 || medicalTime.isBefore(DateTime.now())
-                ? "- No medical cooldown"
-                : medicalGap.inHours > 24
-                    ? "- Medical cooldown will be over more than a day before your return"
-                    : "- Medical cooldown will be over ${_formatDuration(medicalGap)} before your return",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.orange),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    } else {
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            "- Medical cooldown OK",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.green),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final DateTime boosterTime = DateTime.now().add(Duration(seconds: widget.profile!.cooldowns!.booster!));
-    if (boosterTime.isBefore(_earliestBackToTorn)) {
-      anyAffectation = true;
-      final Duration boosterGap = _earliestBackToTorn.difference(boosterTime);
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            widget.profile!.cooldowns!.booster! == 0 || boosterTime.isBefore(DateTime.now())
-                ? "- No booster cooldown"
-                : boosterGap.inHours > 24
-                    ? "- Booster cooldown will be over more than a day before your return"
-                    : "- Booster cooldown will be over ${_formatDuration(boosterGap)} before your return",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.orange),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    } else {
-      affected.add(
-        Padding(
-          padding: const EdgeInsets.only(left: 5),
-          child: Text(
-            "- Booster cooldown OK",
-            style: TextStyle(
-              color: _themeProvider.getTextColor(Colors.green),
-              fontSize: 12,
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (!anyAffectation) {
+    if (!immediateChecks.anyAffected) {
       affected.add(
         Padding(
           padding: const EdgeInsets.only(left: 5),
@@ -1357,7 +1383,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       );
     }
 
-    // DELAYED DEPARTURE
+    // Delayed departure section
     if (_delayedDepartureTime.isAfter(DateTime.now())) {
       String whenToTravel = "delayed departure: ${_timeFormatter(_delayedDepartureTime)}";
       if (_delayedDepartureTime.difference(DateTime.now()).inHours > 24) {
@@ -1376,123 +1402,16 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         ),
       );
 
-      bool anyDelayedAffectation = false;
+      // Calculate return time for delayed departure: departure time + round trip travel time
+      final DateTime earliestBackToTornDelayed = _delayedDepartureTime.add(Duration(seconds: _travelSeconds * 2));
 
-      final Duration extraTime = _delayedDepartureTime.difference(DateTime.now());
-      final DateTime earliestBackToTornDelayed = DateTime.now().add(Duration(seconds: extraTime.inSeconds));
+      final delayedChecks = _buildAllBarChecks(
+        returnTime: earliestBackToTornDelayed,
+        showOkStatus: false,
+      );
+      affected.addAll(delayedChecks.widgets);
 
-      // Energy delayed
-      if (energyTime.isBefore(earliestBackToTornDelayed)) {
-        anyDelayedAffectation = true;
-        final Duration energyGap = earliestBackToTornDelayed.difference(energyTime);
-        affected.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 5),
-            child: Text(
-              widget.profile!.energy!.fulltime! == 0 || energyTime.isBefore(DateTime.now())
-                  ? "- Energy is full"
-                  : energyGap.inHours > 24
-                      ? "- Energy will be full more than a day before your return"
-                      : "- Energy will be full ${_formatDuration(energyGap)} before your return",
-              style: TextStyle(
-                color: _themeProvider.getTextColor(Colors.orange),
-                fontSize: 12,
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Nerve delayed
-      if (nerveTime.isBefore(earliestBackToTornDelayed)) {
-        anyDelayedAffectation = true;
-        final Duration nerveGap = earliestBackToTornDelayed.difference(nerveTime);
-        affected.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 5),
-            child: Text(
-              widget.profile!.nerve!.fulltime! == 0 || nerveTime.isBefore(DateTime.now())
-                  ? "- Nerve is full"
-                  : nerveGap.inHours > 24
-                      ? "- Nerve will be full more than a day before your return"
-                      : "- Nerve will be full ${_formatDuration(nerveGap)} before your return",
-              style: TextStyle(
-                color: _themeProvider.getTextColor(Colors.orange),
-                fontSize: 12,
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Drug delayed
-      if (drugsTime.isBefore(earliestBackToTornDelayed)) {
-        anyDelayedAffectation = true;
-        final Duration drugsGap = earliestBackToTornDelayed.difference(drugsTime);
-        affected.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 5),
-            child: Text(
-              widget.profile!.cooldowns!.drug! == 0 || drugsTime.isBefore(DateTime.now())
-                  ? "- No drug cooldown"
-                  : drugsGap.inHours > 24
-                      ? "- Drug cooldown will be over more than a day before your return"
-                      : "- Drug cooldown will be over ${_formatDuration(drugsGap)} before your return",
-              style: TextStyle(
-                color: _themeProvider.getTextColor(Colors.orange),
-                fontSize: 12,
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Medical delayed
-      if (medicalTime.isBefore(earliestBackToTornDelayed)) {
-        anyDelayedAffectation = true;
-        final Duration medicalsGap = earliestBackToTornDelayed.difference(medicalTime);
-        affected.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 5),
-            child: Text(
-              widget.profile!.cooldowns!.medical! == 0 || medicalTime.isBefore(DateTime.now())
-                  ? "- No medical cooldown"
-                  : medicalsGap.inHours > 24
-                      ? "- Medical cooldown will be over more than a day before your return"
-                      : "- Medical cooldown will be over ${_formatDuration(medicalsGap)} before your return",
-              style: TextStyle(
-                color: _themeProvider.getTextColor(Colors.orange),
-                fontSize: 12,
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Booster delayed
-      if (boosterTime.isBefore(earliestBackToTornDelayed)) {
-        anyDelayedAffectation = true;
-        final Duration boostersGap = earliestBackToTornDelayed.difference(boosterTime);
-        affected.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 5),
-            child: Text(
-              widget.profile!.cooldowns!.booster! == 0 || boosterTime.isBefore(DateTime.now())
-                  ? "- No booster cooldown"
-                  : boostersGap.inHours > 24
-                      ? "- Booster cooldown will be over more than a day before your return"
-                      : "- Booster cooldown will be over ${_formatDuration(boostersGap)} before your return",
-              style: TextStyle(
-                color: _themeProvider.getTextColor(Colors.orange),
-                fontSize: 12,
-              ),
-            ),
-          ),
-        );
-      }
-
-      // No delayed affectation
-      if (!anyDelayedAffectation) {
+      if (!delayedChecks.anyAffected) {
         affected.add(
           Padding(
             padding: const EdgeInsets.only(left: 5),
@@ -1507,8 +1426,6 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         );
       }
     }
-
-    affected.addAll(affectedDelayed);
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -1525,17 +1442,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
     );
   }
 
-  LineChartData _mainChartData() {
-    final spots = <FlSpot>[];
-    double count = 0;
-    double? maxY = 0;
-    final timestamps = <int>[];
-
-    // In order to avoid too many zigzags when restocks occur very frequently, we will restrict the data:
-    // - If there are <= 5 restocks, we will show all the data (around 24 hours)
-    // - If there are more than 5 restocks, we will show the last 12 hours of data
-
-    // Count the restocks
+  int _restockCount() {
     int restockCount = 0;
     int lastValue = 0;
     _periodicMap.forEach((timestamp, value) {
@@ -1544,30 +1451,83 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       }
       lastValue = value;
     });
+    return restockCount;
+  }
 
-    // Filter the map if there are more than 5 restocks
+  SplayTreeMap<dynamic, dynamic> _filteredChartMap() {
     SplayTreeMap<dynamic, dynamic> filteredMap = _periodicMap;
-    if (restockCount > 5) {
-      // Find the latest timestamp
-      int latestTimestamp = _periodicMap.keys.last * 1000;
-      // Calculate the timestamp 12 hours before the latest timestamp
-      DateTime cutoff = DateTime.fromMillisecondsSinceEpoch(latestTimestamp).subtract(const Duration(hours: 12));
-      int cutoffMillis = cutoff.millisecondsSinceEpoch;
+    if (_restockCount() > 5) {
+      final int latestTimestamp = (_periodicMap.keys.last as int) * 1000;
+      final cutoff = DateTime.fromMillisecondsSinceEpoch(latestTimestamp).subtract(
+        const Duration(hours: 12),
+      );
+      final cutoffMillis = cutoff.millisecondsSinceEpoch;
 
-      // Ensure that the filtering results in fewer entries than the original map
       filteredMap = SplayTreeMap.fromIterable(
-        _periodicMap.entries.where((entry) => entry.key * 1000 >= cutoffMillis),
+        _periodicMap.entries.where(
+          (entry) => (entry.key as int) * 1000 >= cutoffMillis,
+        ),
         key: (entry) => entry.key,
         value: (entry) => entry.value,
       );
     }
 
-    // Update the chart data
+    return filteredMap;
+  }
+
+  String _chartRangeDescription() {
+    final filteredMap = _filteredChartMap();
+    if (filteredMap.length < 2) return "Chart: recent stock history";
+
+    final first = DateTime.fromMillisecondsSinceEpoch(
+      (filteredMap.keys.first as int) * 1000,
+    );
+    final last = DateTime.fromMillisecondsSinceEpoch(
+      (filteredMap.keys.last as int) * 1000,
+    );
+    final range = last.difference(first);
+    final rangeText = range.inHours >= 1
+        ? "${range.inHours}h"
+        : "${range.inMinutes}m";
+
+    if (_restockCount() > 5) {
+      return "Chart: last $rangeText, using real time spacing";
+    }
+
+    return "Chart: $rangeText of recent history, using real time spacing";
+  }
+
+  LineChartData _mainChartData() {
+    final filteredMap = _filteredChartMap();
+    final spots = <FlSpot>[];
+    final restockMarkerLines = <VerticalLine>[];
+    double? maxY = 0;
+
+    if (filteredMap.isEmpty) {
+      return LineChartData();
+    }
+
+    final firstTimestamp = filteredMap.keys.first as int;
+    int lastValue = 0;
+    var hasPreviousValue = false;
+
     filteredMap.forEach((timestamp, value) {
-      spots.add(FlSpot(count, value.toDouble()));
-      timestamps.add(timestamp); // Assuming timestamps is a list of DateTime
+      final xValue = ((timestamp as int) - firstTimestamp) / 3600;
+      spots.add(FlSpot(xValue.toDouble(), value.toDouble()));
       if (value > maxY) maxY = value.toDouble();
-      count++;
+
+      if (hasPreviousValue && value > 0 && lastValue == 0) {
+        restockMarkerLines.add(
+          VerticalLine(
+            x: xValue.toDouble(),
+            color: _themeProvider.getTextColor(Colors.green).withAlpha(150),
+            strokeWidth: 1,
+            dashArray: [4, 4],
+          ),
+        );
+      }
+      lastValue = value;
+      hasPreviousValue = true;
     });
 
     double interval;
@@ -1581,6 +1541,11 @@ class ForeignStockCardState extends State<ForeignStockCard> {
       interval = 2;
     }
 
+    final maxX = spots.isEmpty ? 0.0 : spots.last.x;
+    final bottomInterval = maxX > 0
+        ? (maxX / 4).clamp(1.0, 6.0).toDouble()
+        : 1.0;
+
     return LineChartData(
       lineTouchData: LineTouchData(
         touchTooltipData: LineTouchTooltipData(
@@ -1590,17 +1555,7 @@ class ForeignStockCardState extends State<ForeignStockCard> {
           getTooltipItems: (value) {
             final tooltips = <LineTooltipItem>[];
             for (final spot in value) {
-              // Get time
-              var ts = 0;
-              final timesList = [];
-              for (final e in filteredMap.entries) {
-                timesList.add("${e.key}");
-              }
-              var x = spot.x.toInt();
-              if (x > timesList.length) {
-                x = timesList.length;
-              }
-              ts = int.parse(timesList[x]);
+              final ts = firstTimestamp + (spot.x * 3600).round();
               final date = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
 
               final LineTooltipItem thisItem = LineTooltipItem(
@@ -1623,7 +1578,9 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         drawVerticalLine: false,
         getDrawingHorizontalLine: (value) {
           return FlLine(
-            color: _themeProvider.currentTheme == AppTheme.dark ? Colors.blueGrey : const Color(0xff37434d),
+            color: _themeProvider.currentTheme == AppTheme.dark
+                ? Colors.blueGrey
+                : const Color(0xff37434d),
             strokeWidth: 0.4,
           );
         },
@@ -1643,19 +1600,13 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         bottomTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
-            interval: filteredMap.length > 12 ? filteredMap.length / 12 : null,
-            reservedSize: 20,
+            interval: bottomInterval,
+            reservedSize: 28,
             getTitlesWidget: (xValue, titleMeta) {
-              if (xValue.toInt() >= filteredMap.length) {
-                xValue = xValue - 1;
-              }
-              final date = DateTime.fromMillisecondsSinceEpoch(timestamps[xValue.toInt()] * 1000);
+              if (xValue < 0 || xValue > maxX) return const SizedBox.shrink();
 
-              // Style
-              TextStyle myStyle;
-              if (xValue.toInt() >= filteredMap.length) {
-                xValue = xValue - 1;
-              }
+              final ts = firstTimestamp + (xValue * 3600).round();
+              final date = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
               final difference = DateTime.now().difference(date).inHours;
 
               Color myColor = Colors.transparent;
@@ -1664,25 +1615,16 @@ class ForeignStockCardState extends State<ForeignStockCard> {
               } else {
                 myColor = _themeProvider.getTextColor(Colors.blue);
               }
-              myStyle = TextStyle(
+              final myStyle = TextStyle(
                 color: myColor,
                 fontSize: 10,
               );
 
-              const degrees = -70;
-              const radians = degrees * math.pi / 180;
-
-              return Transform.rotate(
-                angle: radians,
-                child: SizedBox(
-                  width: _settingsProvider.currentTimeFormat == TimeFormatSetting.h12 ||
-                          _settingsProvider.currentTimeZone == TimeZoneSetting.tornTime
-                      ? 120
-                      : 80,
-                  child: Text(
-                    _timeFormatter(date)!,
-                    style: myStyle,
-                  ),
+              return SideTitleWidget(
+                meta: titleMeta,
+                child: Text(
+                  _timeFormatter(date)!,
+                  style: myStyle,
                 ),
               );
             },
@@ -1698,7 +1640,9 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                 return Text(
                   "${(yValue / 1000).truncate().toStringAsFixed(0)}K",
                   style: TextStyle(
-                    color: _themeProvider.currentTheme == AppTheme.dark ? Colors.blueGrey : const Color(0xff67727d),
+                    color: _themeProvider.currentTheme == AppTheme.dark
+                        ? Colors.blueGrey
+                        : const Color(0xff67727d),
                     fontSize: 10,
                   ),
                 );
@@ -1706,7 +1650,9 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                 return Text(
                   yValue.floor().toString(),
                   style: TextStyle(
-                    color: _themeProvider.currentTheme == AppTheme.dark ? Colors.blueGrey : const Color(0xff67727d),
+                    color: _themeProvider.currentTheme == AppTheme.dark
+                        ? Colors.blueGrey
+                        : const Color(0xff67727d),
                     fontSize: 10,
                   ),
                 );
@@ -1723,9 +1669,12 @@ class ForeignStockCardState extends State<ForeignStockCard> {
         ),
       ),
       minX: 0,
-      maxX: filteredMap.length.toDouble(),
+      maxX: maxX == 0 ? 1 : maxX,
       minY: 0,
-      maxY: maxY! + maxY! * 0.1,
+      maxY: maxY == 0 ? 1.0 : maxY! + maxY! * 0.1,
+      extraLinesData: ExtraLinesData(
+        verticalLines: restockMarkerLines,
+      ),
       lineBarsData: [
         LineChartBarData(
           spots: spots,
@@ -1975,7 +1924,97 @@ class ForeignStockCardState extends State<ForeignStockCard> {
     );
   }
 
-  Future<void> _openWalletDialog() {
+  void _copyToClipboard(String content, String successMessage) {
+    Clipboard.setData(ClipboardData(text: content));
+    BotToast.showText(
+      text: successMessage,
+      textStyle: const TextStyle(
+        fontSize: 14,
+        color: Colors.white,
+      ),
+      contentColor: Colors.green,
+      duration: const Duration(seconds: 4),
+      contentPadding: const EdgeInsets.all(10),
+    );
+  }
+
+  Widget _buildVaultCopyBox({
+    required String label,
+    required int amount,
+    required String successMessage,
+    bool highlight = false,
+  }) {
+    final formattedAmount = formatProfit(inputInt: amount).replaceAll('.0', '');
+    final borderColor = highlight ? Colors.blueGrey.shade300 : Colors.blueGrey.shade500;
+    final labelColor = _themeProvider.mainText;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _copyToClipboard(amount.toString(), successMessage),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: borderColor, width: 1),
+          color: Colors.transparent,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  MdiIcons.cash,
+                  size: 16,
+                  color: _themeProvider.getTextColor(Colors.green),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    '$label \$$formattedAmount',
+                    textAlign: TextAlign.center,
+                    softWrap: true,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: labelColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              children: [
+                Text(
+                  'Copy $label',
+                  textAlign: TextAlign.center,
+                  softWrap: true,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: labelColor,
+                  ),
+                ),
+                Icon(
+                  Icons.copy_rounded,
+                  size: 14,
+                  color: labelColor,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openWalletDialog({required int requiredTotal, required int missingAmount}) {
     return showDialog<void>(
       context: context,
       barrierDismissible: false, // user must tap button!
@@ -2120,6 +2159,26 @@ class ForeignStockCardState extends State<ForeignStockCard> {
                                     browserTapType: BrowserTapType.long,
                                   );
                             },
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                          child: Column(
+                            children: [
+                              _buildVaultCopyBox(
+                                label: 'Total',
+                                amount: requiredTotal,
+                                successMessage: 'Total amount copied to clipboard!',
+                              ),
+                              const SizedBox(height: 10),
+                              _buildVaultCopyBox(
+                                label: 'Missing',
+                                amount: missingAmount,
+                                successMessage: 'Missing amount copied to clipboard!',
+                                highlight: true,
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 10),

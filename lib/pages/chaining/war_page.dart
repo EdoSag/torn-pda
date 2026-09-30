@@ -37,12 +37,15 @@ import 'package:torn_pda/widgets/chaining/chain_widget.dart';
 import 'package:torn_pda/widgets/chaining/share_stats_dialog.dart';
 import 'package:torn_pda/widgets/chaining/war_card.dart';
 import 'package:torn_pda/widgets/chaining/war_settings_sheet.dart';
+import 'package:torn_pda/widgets/ffscouter/ffscouter_faction_activity_panel.dart';
 //import 'package:torn_pda/widgets/revive/hela_revive_button.dart';
 import 'package:torn_pda/widgets/revive/midnightx_revive_button.dart';
 import 'package:torn_pda/widgets/revive/nuke_revive_button.dart';
 import 'package:torn_pda/widgets/revive/uhc_revive_button.dart';
 import 'package:torn_pda/widgets/revive/wolverines_revive_button.dart';
+import 'package:torn_pda/widgets/revive/asclepius_revive_button.dart';
 import 'package:torn_pda/widgets/revive/wtf_revive_button.dart';
+import 'package:torn_pda/widgets/revive/combat_ready_revive_button.dart';
 import 'package:torn_pda/widgets/spies/spies_management_dialog.dart';
 import 'package:torn_pda/widgets/pda_browser_icon.dart';
 
@@ -76,6 +79,12 @@ class WarOptions {
         // Own icon in widget
         break;
       case "The Wolverines revive":
+        // Own icon in widget
+        break;
+      case "Combat Ready revive":
+        // Own icon in widget
+        break;
+      case "Asclepius revive":
         // Own icon in widget
         break;
     }
@@ -124,6 +133,8 @@ class WarPageState extends State<WarPage> {
     WarOptions(description: "WTF revive"),
     WarOptions(description: "Midnight X revive"),
     WarOptions(description: "The Wolverines revive"),
+    WarOptions(description: "Combat Ready revive"),
+    WarOptions(description: "Asclepius revive"),
   ];
 
   @override
@@ -155,23 +166,20 @@ class WarPageState extends State<WarPage> {
     _webViewProvider = Provider.of<WebViewProvider>(context);
 
     return ShowCaseWidget(
-      builder: (_) {
+      builder: (ctx) {
         if (_w.showCaseStart) {
           // Delaying also (even Duration.zero works) to avoid state conflicts with build
           Future.delayed(const Duration(seconds: 1), () async {
-            ShowCaseWidget.of(_).startShowCase([_showCaseAddFaction, _showCaseUpdate]);
+            ShowCaseWidget.of(ctx).startShowCase([_showCaseAddFaction, _showCaseUpdate]);
             _w.showCaseStart = false;
           });
         }
         return Scaffold(
           backgroundColor: _themeProvider!.canvas,
           drawer: !_webViewProvider.splitScreenAndBrowserLeft() ? const Drawer() : null,
-          appBar: _settingsProvider!.appBarTop ? buildAppBar(_) : null,
+          appBar: _settingsProvider!.appBarTop ? buildAppBar(ctx) : null,
           bottomNavigationBar: !_settingsProvider!.appBarTop
-              ? SizedBox(
-                  height: AppBar().preferredSize.height,
-                  child: buildAppBar(_),
-                )
+              ? SizedBox(height: AppBar().preferredSize.height, child: buildAppBar(ctx))
               : null,
           body: Container(
             color: _themeProvider!.currentTheme == AppTheme.extraDark ? Colors.black : Colors.transparent,
@@ -180,9 +188,7 @@ class WarPageState extends State<WarPage> {
               onTap: () => FocusScope.of(context).requestFocus(FocusNode()),
               child: MediaQuery.orientationOf(context) == Orientation.portrait
                   ? _mainColumn()
-                  : SingleChildScrollView(
-                      child: _mainColumn(),
-                    ),
+                  : SingleChildScrollView(child: _mainColumn()),
             ),
           ),
         );
@@ -203,10 +209,7 @@ class WarPageState extends State<WarPage> {
                 child: Text(
                   "${w.factions.where((f) => f.hidden!).length} "
                   "${w.factions.where((f) => f.hidden!).length == 1 ? 'faction is' : 'factions are'} filtered out",
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.orange[700],
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.orange[700]),
                 ),
               ),
             if (hiddenMembers > 0)
@@ -214,18 +217,13 @@ class WarPageState extends State<WarPage> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   "$hiddenMembers ${hiddenMembers == 1 ? 'target is' : 'targets are'} hidden",
-                  style: const TextStyle(
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(fontSize: 12),
                 ),
               ),
             const SizedBox(height: 5),
             if (w.showChainWidget)
-              ChainWidget(
-                key: _chainWidgetKey,
-                alwaysDarkBackground: false,
-                callBackOptions: _callBackChainOptions,
-              ),
+              ChainWidget(key: _chainWidgetKey, alwaysDarkBackground: false, callBackOptions: _callBackChainOptions),
+            const FFScouterFactionActivityPanel(),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -278,34 +276,26 @@ class WarPageState extends State<WarPage> {
         initialLabelIndex: _w.onlineFilter == 0
             ? null
             : _w.onlineFilter == 1
-                ? 0
-                : 1,
+            ? 0
+            : 1,
         activeBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? [Colors.blueGrey]
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? [Colors.blueGrey]
-                : [Colors.blueGrey[900]!],
+            ? [Colors.blueGrey]
+            : [Colors.blueGrey[900]!],
         activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? Colors.white
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? Colors.grey[800]
-                : Colors.black,
+            ? Colors.grey[800]
+            : Colors.black,
         inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         totalSwitches: 2,
         animate: true,
         animationDuration: 500,
         customIcons: const [
-          Icon(
-            Icons.circle,
-            color: Colors.green,
-            size: 12,
-          ),
-          Icon(
-            Icons.circle,
-            color: Colors.red,
-            size: 12,
-          )
+          Icon(Icons.circle, color: Colors.green, size: 12),
+          Icon(Icons.circle, color: Colors.red, size: 12),
         ],
         onToggle: (index) async {
           await _performQuickUpdate(forceIntegrityCheck: false);
@@ -329,10 +319,7 @@ class WarPageState extends State<WarPage> {
           BotToast.showText(
             clickClose: true,
             text: message,
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 3),
             contentPadding: const EdgeInsets.all(10),
@@ -354,34 +341,26 @@ class WarPageState extends State<WarPage> {
         initialLabelIndex: _w.okayRedFilter == 0
             ? null
             : _w.okayRedFilter == 1
-                ? 0
-                : 1,
+            ? 0
+            : 1,
         activeBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? [Colors.blueGrey]
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? [Colors.blueGrey]
-                : [Colors.blueGrey[900]!],
+            ? [Colors.blueGrey]
+            : [Colors.blueGrey[900]!],
         activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? Colors.white
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? Colors.grey[800]
-                : Colors.black,
+            ? Colors.grey[800]
+            : Colors.black,
         inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         totalSwitches: 2,
         animate: true,
         animationDuration: 500,
         customIcons: [
-          const Icon(
-            MdiIcons.check,
-            size: 12,
-            color: Colors.green,
-          ),
-          const Icon(
-            MdiIcons.hospital,
-            size: 12,
-            color: Colors.red,
-          ),
+          const Icon(MdiIcons.check, size: 12, color: Colors.green),
+          const Icon(MdiIcons.hospital, size: 12, color: Colors.red),
         ],
         onToggle: (index) async {
           await _performQuickUpdate(forceIntegrityCheck: false);
@@ -405,10 +384,7 @@ class WarPageState extends State<WarPage> {
           BotToast.showText(
             clickClose: true,
             text: message,
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 3),
             contentPadding: const EdgeInsets.all(10),
@@ -431,24 +407,19 @@ class WarPageState extends State<WarPage> {
         activeBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? [Colors.blueGrey]
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? [Colors.blueGrey]
-                : [Colors.blueGrey[900]!],
+            ? [Colors.blueGrey]
+            : [Colors.blueGrey[900]!],
         activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? Colors.white
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? Colors.grey[800]
-                : Colors.black,
+            ? Colors.grey[800]
+            : Colors.black,
         inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         totalSwitches: 1,
         animate: true,
         animationDuration: 500,
-        customIcons: [
-          const Icon(
-            MdiIcons.mapMarker,
-            size: 12,
-          ),
-        ],
+        customIcons: [const Icon(MdiIcons.mapMarker, size: 12)],
         onToggle: (index) async {
           await _performQuickUpdate(forceIntegrityCheck: false);
 
@@ -469,10 +440,7 @@ class WarPageState extends State<WarPage> {
           BotToast.showText(
             clickClose: true,
             text: message,
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 3),
             contentPadding: const EdgeInsets.all(10),
@@ -494,39 +462,30 @@ class WarPageState extends State<WarPage> {
         initialLabelIndex: _w.abroadFilter == 0
             ? null
             : _w.abroadFilter == 1
-                ? 0
-                : 1,
+            ? 0
+            : 1,
         activeBgColor: _w.abroadFilter == 1
             ? _themeProvider!.currentTheme == AppTheme.light
-                ? [Colors.blue[200]!]
-                : _themeProvider!.currentTheme == AppTheme.dark
-                    ? [Colors.blue[500]!]
-                    : [Colors.blue[900]!]
+                  ? [Colors.blue[200]!]
+                  : _themeProvider!.currentTheme == AppTheme.dark
+                  ? [Colors.blue[500]!]
+                  : [Colors.blue[900]!]
             : _themeProvider!.currentTheme == AppTheme.light
-                ? [Colors.red[200]!]
-                : _themeProvider!.currentTheme == AppTheme.dark
-                    ? [Colors.red[500]!]
-                    : [Colors.red[900]!],
+            ? [Colors.red[200]!]
+            : _themeProvider!.currentTheme == AppTheme.dark
+            ? [Colors.red[500]!]
+            : [Colors.red[900]!],
         activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? Colors.white
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? Colors.grey[800]
-                : Colors.black,
+            ? Colors.grey[800]
+            : Colors.black,
         inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         totalSwitches: 2,
         animate: true,
         animationDuration: 500,
-        customIcons: [
-          const Icon(
-            MdiIcons.airplane,
-            size: 12,
-          ),
-          const Icon(
-            MdiIcons.airplaneOff,
-            size: 12,
-          ),
-        ],
+        customIcons: [const Icon(MdiIcons.airplane, size: 12), const Icon(MdiIcons.airplaneOff, size: 12)],
         onToggle: (index) async {
           await _performQuickUpdate(forceIntegrityCheck: false);
 
@@ -549,10 +508,7 @@ class WarPageState extends State<WarPage> {
           BotToast.showText(
             clickClose: true,
             text: message,
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 3),
             contentPadding: const EdgeInsets.all(10),
@@ -575,14 +531,14 @@ class WarPageState extends State<WarPage> {
         activeBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? [Colors.blueGrey]
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? [Colors.blueGrey]
-                : [Colors.blueGrey[900]!],
+            ? [Colors.blueGrey]
+            : [Colors.blueGrey[900]!],
         activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
             ? Colors.white
             : _themeProvider!.currentTheme == AppTheme.dark
-                ? Colors.grey[800]
-                : Colors.black,
+            ? Colors.grey[800]
+            : Colors.black,
         inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
         totalSwitches: 1,
         animate: true,
@@ -593,8 +549,8 @@ class WarPageState extends State<WarPage> {
             color: w.showChainWidget
                 ? Colors.white
                 : _themeProvider!.currentTheme != AppTheme.light
-                    ? Colors.white
-                    : Colors.black,
+                ? Colors.white
+                : Colors.black,
             size: 12,
           ),
         ],
@@ -635,7 +591,8 @@ class WarPageState extends State<WarPage> {
           disableMovingAnimation: true,
           key: _showCaseAddFaction,
           title: 'Welcome to War!',
-          description: "\nThe first thing you'll want to do is to add an enemy faction to your list. You can do so by "
+          description:
+              "\nThe first thing you'll want to do is to add an enemy faction to your list. You can do so by "
               "tapping this icon."
               "\n\nIf you don't know the faction's ID, you can optionally insert one of it's members' "
               "ID (look for the 'person' icon)."
@@ -645,12 +602,7 @@ class WarPageState extends State<WarPage> {
           descTextStyle: const TextStyle(fontSize: 13),
           tooltipPadding: const EdgeInsets.all(20),
           child: IconButton(
-            icon: Image.asset(
-              'images/icons/faction_add.png',
-              width: 20,
-              height: 20,
-              color: Colors.white,
-            ),
+            icon: Image.asset('images/icons/faction_add.png', width: 20, height: 20, color: Colors.white),
             onPressed: () {
               _showAddDialog(context);
             },
@@ -660,7 +612,8 @@ class WarPageState extends State<WarPage> {
           disableMovingAnimation: true,
           key: _showCaseUpdate,
           title: 'Updating targets!',
-          description: "\nThere are a couple of ways to update war targets.\n\nWith a short tap, you can perform "
+          description:
+              "\nThere are a couple of ways to update war targets.\n\nWith a short tap, you can perform "
               "a quick update with minimal target information (some stats and life information won't be available).\n\n"
               "A long-press will start a slower but full update of all targets.\n\n"
               "Alternatively, you can update targets individually.",
@@ -674,10 +627,7 @@ class WarPageState extends State<WarPage> {
               builder: (w) {
                 if (w.updating) {
                   return GestureDetector(
-                    child: Icon(
-                      MdiIcons.closeOctagonOutline,
-                      color: Colors.orange[700],
-                    ),
+                    child: Icon(MdiIcons.closeOctagonOutline, color: Colors.orange[700]),
                     onTap: () async {
                       _w.stopUpdate();
                     },
@@ -704,12 +654,10 @@ class WarPageState extends State<WarPage> {
                         if (allMembers > 60) {
                           BotToast.showText(
                             clickClose: true,
-                            text: "Updating $allMembers war targets, this might take a while.\n\nExtra time needed to "
+                            text:
+                                "Updating $allMembers war targets, this might take a while.\n\nExtra time needed to "
                                 "avoid issues with API request limits!",
-                            textStyle: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.white,
-                            ),
+                            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                             contentColor: messageColor,
                             duration: const Duration(seconds: 3),
                             contentPadding: const EdgeInsets.all(10),
@@ -732,10 +680,7 @@ class WarPageState extends State<WarPage> {
                         BotToast.showText(
                           clickClose: true,
                           text: message,
-                          textStyle: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.white,
-                          ),
+                          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                           contentColor: messageColor!,
                           duration: const Duration(seconds: 3),
                           contentPadding: const EdgeInsets.all(10),
@@ -772,7 +717,8 @@ class WarPageState extends State<WarPage> {
               }
             }
 
-            bool smartScoreActive = w.currentSort == WarSortType.smartScore &&
+            bool smartScoreActive =
+                w.currentSort == WarSortType.smartScore &&
                 (w.warSettings.weightLevel != 0 ||
                     w.warSettings.weightLife != 0 ||
                     w.warSettings.weightFairFight != 0 ||
@@ -784,7 +730,8 @@ class WarPageState extends State<WarPage> {
                     w.warSettings.weightSpeed != 0 ||
                     w.warSettings.weightDexterity != 0);
 
-            bool filtersActive = w.warSettings.filtersEnabled &&
+            bool filtersActive =
+                w.warSettings.filtersEnabled &&
                 (w.warSettings.levelRange != null ||
                     w.warSettings.lifeRange != null ||
                     w.warSettings.fairFightRange != null ||
@@ -798,10 +745,7 @@ class WarPageState extends State<WarPage> {
 
             bool isActive = smartScoreActive || filtersActive;
             return IconButton(
-              icon: Icon(
-                Icons.sort,
-                shadows: isActive ? _shadowList() : null,
-              ),
+              icon: Icon(Icons.sort, shadows: isActive ? _shadowList() : null),
               onPressed: () {
                 showModalBottomSheet(
                   context: context,
@@ -852,6 +796,10 @@ class WarPageState extends State<WarPage> {
                 openMidnightXReviveDialog(context, _themeProvider!, null);
               case "The Wolverines revive":
                 openWolverinesReviveDialog(context, _themeProvider!, null);
+              case "Combat Ready revive":
+                openCombatReadyReviveDialog(context, _themeProvider!, null);
+              case "Asclepius revive":
+                openAsclepiusReviveDialog(context, _themeProvider!, null);
             }
           },
           itemBuilder: (BuildContext context) {
@@ -878,131 +826,128 @@ class WarPageState extends State<WarPage> {
               spiesUpdateColor = (lastUpdatedTs < oneMonthAgo) ? Colors.red : _themeProvider!.mainText;
             }
 
-            return _popupOptionsChoices.where((WarOptions choice) {
-              // Don't return hidden members option if there is none
-              if (choice.description!.contains("Hidden") && _w.getHiddenMembersNumber() == 0) {
-                return false;
-              }
-              // Revives
-              if (choice.description!.contains("Nuke") && !_w.nukeReviveActive) {
-                return false;
-              }
-              if (choice.description!.contains("UHC") && !_w.uhcReviveActive) {
-                return false;
-              }
-              /*
+            return _popupOptionsChoices
+                .where((WarOptions choice) {
+                  // Don't return hidden members option if there is none
+                  if (choice.description!.contains("Hidden") && _w.getHiddenMembersNumber() == 0) {
+                    return false;
+                  }
+                  // Revives
+                  if (choice.description!.contains("Nuke") && !_w.nukeReviveActive) {
+                    return false;
+                  }
+                  if (choice.description!.contains("UHC") && !_w.uhcReviveActive) {
+                    return false;
+                  }
+                  /*
               if (choice.description!.contains("HeLa") && !_w.helaReviveActive) {
                 return false;
               }
               */
-              if (choice.description!.contains("WTF") && !_w.wtfReviveActive) {
-                return false;
-              }
-              if (choice.description!.contains("Midnight X") && !_w.midnightXReviveActive) {
-                return false;
-              }
-              if (choice.description!.contains("The Wolverines") && !_w.wolverinesReviveActive) {
-                return false;
-              }
-              return true;
-            }).map((WarOptions choice) {
-              // Spies
-              if (choice.description!.contains("Manage Spies")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Icon(
-                          MdiIcons.incognito,
-                          size: 24,
-                          color: _themeProvider!.mainText,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Flexible(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                  if (choice.description!.contains("WTF") && !_w.wtfReviveActive) {
+                    return false;
+                  }
+                  if (choice.description!.contains("Midnight X") && !_w.midnightXReviveActive) {
+                    return false;
+                  }
+                  if (choice.description!.contains("The Wolverines") && !_w.wolverinesReviveActive) {
+                    return false;
+                  }
+                  if (choice.description!.contains("Combat Ready") && !_w.combatReadyReviveActive) {
+                    return false;
+                  }
+                  if (choice.description!.contains("Asclepius") && !_w.asclepiusReviveActive) {
+                    return false;
+                  }
+                  return true;
+                })
+                .map((WarOptions choice) {
+                  // Spies
+                  if (choice.description!.contains("Manage Spies")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Icon(MdiIcons.incognito, size: 24, color: _themeProvider!.mainText),
+                          ),
+                          const SizedBox(width: 10),
+                          Flexible(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text("Manage Spies"),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  height: 25,
-                                  width: 25,
-                                  child: Image.asset(
-                                    spyController.spiesSource == SpiesSource.yata
-                                        ? 'images/icons/yata_logo.png'
-                                        : 'images/icons/tornstats_logo.png',
-                                  ),
+                                Row(
+                                  children: [
+                                    const Text("Manage Spies"),
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      height: 25,
+                                      width: 25,
+                                      child: Image.asset(
+                                        spyController.spiesSource == SpiesSource.yata
+                                            ? 'images/icons/yata_logo.png'
+                                            : 'images/icons/tornstats_logo.png',
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                                Text(lastUpdated, style: TextStyle(fontSize: 11, color: spiesUpdateColor)),
                               ],
                             ),
-                            Text(
-                              lastUpdated,
-                              style: TextStyle(fontSize: 11, color: spiesUpdateColor),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              }
-              // Share stats
-              if (choice.description!.contains("Share stats")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Icon(
-                          Icons.share,
-                          size: 24,
-                          color: _themeProvider!.mainText,
-                        ),
+                    );
+                  }
+                  // Share stats
+                  if (choice.description!.contains("Share stats")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Icon(Icons.share, size: 24, color: _themeProvider!.mainText),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Share stats")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Share stats")),
-                    ],
-                  ),
-                );
-              }
-              // Reviving services
-              if (choice.description!.contains("Nuke")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Image.asset('images/icons/nuke-revive.png', width: 24),
+                    );
+                  }
+                  // Reviving services
+                  if (choice.description!.contains("Nuke")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/nuke-revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (Nuke)")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Request a revive (Nuke)")),
-                    ],
-                  ),
-                );
-              }
-              if (choice.description!.contains("UHC")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Image.asset('images/icons/uhc_revive.png', width: 24),
+                    );
+                  }
+                  if (choice.description!.contains("UHC")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/uhc_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (UHC)")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Request a revive (UHC)")),
-                    ],
-                  ),
-                );
-              }
-              /*
+                    );
+                  }
+                  /*
               if (choice.description!.contains("HeLa")) {
                 return PopupMenuItem<WarOptions>(
                   value: choice,
@@ -1019,73 +964,100 @@ class WarPageState extends State<WarPage> {
                 );
               }
               */
-              if (choice.description!.contains("WTF")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Image.asset('images/icons/wtf_revive.png', width: 24),
+                  if (choice.description!.contains("WTF")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/wtf_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (WTF)")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Request a revive (WTF)")),
-                    ],
-                  ),
-                );
-              }
-              if (choice.description!.contains("Midnight X")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Image.asset('images/icons/midnightx_revive.png', width: 24),
+                    );
+                  }
+                  if (choice.description!.contains("Midnight X")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/midnightx_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (Midnight X)")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Request a revive (Midnight X)")),
-                    ],
-                  ),
-                );
-              }
-              if (choice.description!.contains("The Wolverines")) {
-                return PopupMenuItem<WarOptions>(
-                  value: choice,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 13),
-                        child: Image.asset('images/icons/wolverines_revive.png', width: 24),
+                    );
+                  }
+                  if (choice.description!.contains("The Wolverines")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/wolverines_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (The Wolverines)")),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text("Request a revive (The Wolverines)")),
-                    ],
-                  ),
-                );
-              }
-              // Everything else
-              return PopupMenuItem<WarOptions>(
-                value: choice,
-                child: Row(
-                  children: [
-                    Icon(choice.iconData, size: 20, color: _themeProvider!.mainText),
-                    const SizedBox(width: 10),
-                    Text(choice.description!),
-                  ],
-                ),
-              );
-            }).toList();
+                    );
+                  }
+                  if (choice.description!.contains("Combat Ready")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/combat_ready_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (Combat Ready)")),
+                        ],
+                      ),
+                    );
+                  }
+                  if (choice.description!.contains("Asclepius")) {
+                    return PopupMenuItem<WarOptions>(
+                      value: choice,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 13),
+                            child: Image.asset('images/icons/asclepius_revive.png', width: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Flexible(child: Text("Request a revive (Asclepius)")),
+                        ],
+                      ),
+                    );
+                  }
+                  // Everything else
+                  return PopupMenuItem<WarOptions>(
+                    value: choice,
+                    child: Row(
+                      children: [
+                        Icon(choice.iconData, size: 20, color: _themeProvider!.mainText),
+                        const SizedBox(width: 10),
+                        Text(choice.description!),
+                      ],
+                    ),
+                  );
+                })
+                .toList();
           },
         ),
         IconButton(
           icon: const Icon(MdiIcons.earth),
           onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (BuildContext context) => const RankedWarsPage(),
-              ),
-            );
+            Navigator.of(context).push(MaterialPageRoute(builder: (BuildContext context) => const RankedWarsPage()));
           },
         ),
       ],
@@ -1102,10 +1074,7 @@ class WarPageState extends State<WarPage> {
         BotToast.showText(
           clickClose: true,
           text: "Fetching information, please wait...",
-          textStyle: const TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-          ),
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
           contentColor: Colors.grey[700]!,
           duration: const Duration(seconds: 3),
           contentPadding: const EdgeInsets.all(10),
@@ -1126,10 +1095,12 @@ class WarPageState extends State<WarPage> {
         message = "No targets to update!";
         messageColor = Colors.orange[700];
       } else if (updatedMembers > 0 && updatedMembers >= allMembers) {
-        message = 'Successfully updated $updatedMembers war targets!\n\n'
+        message =
+            'Successfully updated $updatedMembers war targets!\n\n'
             'A quick update was performed (only stats, state and online status).';
       } else if (updatedMembers > 0 && updatedMembers < allMembers) {
-        message = 'Updated $updatedMembers war targets, but ${allMembers - updatedMembers} failed!\n\n'
+        message =
+            'Updated $updatedMembers war targets, but ${allMembers - updatedMembers} failed!\n\n'
             'A quick update was performed (only stats, state and online status).';
         messageColor = Colors.orange[700];
       }
@@ -1149,10 +1120,12 @@ class WarPageState extends State<WarPage> {
 
       if (additionalSortingIssue) {
         if (!firstTime) {
-          message += "\n\nNOTE: your current SORT selection ($sort) requires a FULL UPDATE (LONG-PRESS) to retrieve "
+          message +=
+              "\n\nNOTE: your current SORT selection ($sort) requires a FULL UPDATE (LONG-PRESS) to retrieve "
               "the necessary details!";
         } else {
-          message = "Your current SORT selection ($sort) requires a FULL UPDATE (LONG-PRESS) to retrieve "
+          message =
+              "Your current SORT selection ($sort) requires a FULL UPDATE (LONG-PRESS) to retrieve "
               "the necessary details!";
         }
       }
@@ -1163,10 +1136,7 @@ class WarPageState extends State<WarPage> {
         BotToast.showText(
           clickClose: true,
           text: message,
-          textStyle: const TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-          ),
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
           contentColor: messageColor!,
           duration: const Duration(seconds: 5),
           contentPadding: const EdgeInsets.all(10),
@@ -1185,9 +1155,9 @@ class WarPageState extends State<WarPage> {
     }
   }
 
-  Future<void> _showAddDialog(BuildContext _) {
+  Future<void> _showAddDialog(BuildContext ctx) {
     return showDialog<void>(
-      context: _,
+      context: ctx,
       builder: (BuildContext context) {
         return GetBuilder<WarController>(
           builder: (w) => AddFactionDialog(
@@ -1201,15 +1171,12 @@ class WarPageState extends State<WarPage> {
     );
   }
 
-  Future<void> _showHiddenMembersDialogs(BuildContext _) {
+  Future<void> _showHiddenMembersDialogs(BuildContext ctx) {
     return showDialog<void>(
-      context: _,
+      context: ctx,
       builder: (BuildContext context) {
         return GetBuilder<WarController>(
-          builder: (w) => HiddenMembersDialog(
-            themeProvider: _themeProvider,
-            warController: w,
-          ),
+          builder: (w) => HiddenMembersDialog(themeProvider: _themeProvider, warController: w),
         );
       },
     );
@@ -1217,21 +1184,9 @@ class WarPageState extends State<WarPage> {
 
   List<Shadow> _shadowList() {
     return [
-      Shadow(
-        color: Colors.orange.shade800.withValues(alpha: 1),
-        offset: const Offset(0, 0),
-        blurRadius: 20,
-      ),
-      Shadow(
-        color: Colors.orange.shade800.withValues(alpha: 1),
-        offset: const Offset(0, 0),
-        blurRadius: 20,
-      ),
-      Shadow(
-        color: Colors.orange.shade800.withValues(alpha: 1),
-        offset: const Offset(0, 0),
-        blurRadius: 5,
-      ),
+      Shadow(color: Colors.orange.shade800.withValues(alpha: 1), offset: const Offset(0, 0), blurRadius: 20),
+      Shadow(color: Colors.orange.shade800.withValues(alpha: 1), offset: const Offset(0, 0), blurRadius: 20),
+      Shadow(color: Colors.orange.shade800.withValues(alpha: 1), offset: const Offset(0, 0), blurRadius: 5),
     ];
   }
 
@@ -1260,48 +1215,28 @@ class AddFactionDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final targets = context.read<TargetsProvider>().allTargets; // To retrieve existing notes and FF/R
     return AlertDialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 0.0,
       backgroundColor: Colors.transparent,
       content: Container(
         width: double.maxFinite,
-        padding: const EdgeInsets.only(
-          top: 45,
-          bottom: 16,
-          left: 16,
-          right: 16,
-        ),
+        padding: const EdgeInsets.only(top: 45, bottom: 16, left: 16, right: 16),
         margin: const EdgeInsets.only(top: 30),
         decoration: BoxDecoration(
           color: themeProvider!.secondBackground,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black26,
-              blurRadius: 10.0,
-              offset: Offset(0.0, 10.0),
-            ),
-          ],
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10.0, offset: Offset(0.0, 10.0))],
         ),
         child: Form(
           key: addFormKey,
           child: Column(
             mainAxisSize: MainAxisSize.min, // To make the card compact
             children: <Widget>[
-              const Text(
-                "Add Faction to War",
-                style: TextStyle(fontSize: 13),
-              ),
+              const Text("Add Faction to War", style: TextStyle(fontSize: 13)),
               const SizedBox(height: 5),
               Text(
                 "Press the icon to the right to switch between faction ID or player ID input",
-                style: TextStyle(
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                  color: Colors.grey[600],
-                ),
+                style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey[600]),
               ),
               const SizedBox(height: 15),
               Row(
@@ -1335,11 +1270,7 @@ class AddFactionDialog extends StatelessWidget {
                   ),
                   IconButton(
                     icon: warController.addFromUserId
-                        ? Image.asset(
-                            'images/icons/faction.png',
-                            color: themeProvider!.mainText,
-                            width: 16,
-                          )
+                        ? Image.asset('images/icons/faction.png', color: themeProvider!.mainText, width: 16)
                         : const Icon(Icons.person),
                     onPressed: () {
                       warController.toggleAddFromUserId();
@@ -1349,13 +1280,8 @@ class AddFactionDialog extends StatelessWidget {
               ),
               const SizedBox(height: 16.0),
               if (warController.toggleAddUserActive)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 5),
-                  child: CircularProgressIndicator(),
-                ),
-              Flexible(
-                child: factionCards(),
-              ),
+                const Padding(padding: EdgeInsets.only(bottom: 5), child: CircularProgressIndicator()),
+              Flexible(child: factionCards()),
               const SizedBox(height: 16.0),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -1369,10 +1295,7 @@ class AddFactionDialog extends StatelessWidget {
                         BotToast.showText(
                           clickClose: true,
                           text: "Fetching information, please wait...",
-                          textStyle: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.white,
-                          ),
+                          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                           contentColor: Colors.grey[700]!,
                           duration: const Duration(seconds: 3),
                           contentPadding: const EdgeInsets.all(10),
@@ -1405,10 +1328,7 @@ class AddFactionDialog extends StatelessWidget {
                             BotToast.showText(
                               clickClose: true,
                               text: convertError,
-                              textStyle: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.white,
-                              ),
+                              textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                               contentColor: Colors.orange[700]!,
                               duration: const Duration(seconds: 3),
                               contentPadding: const EdgeInsets.all(10),
@@ -1426,7 +1346,8 @@ class AddFactionDialog extends StatelessWidget {
                         }
 
                         int time = 5;
-                        String message = 'Added $addFactionResult [$inputId]!'
+                        String message =
+                            'Added $addFactionResult [$inputId]!'
                             '\n\nUpdate members/global to get more information (life, stats).';
 
                         if (addFactionResult.isEmpty) {
@@ -1440,10 +1361,7 @@ class AddFactionDialog extends StatelessWidget {
                         BotToast.showText(
                           clickClose: true,
                           text: message,
-                          textStyle: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.white,
-                          ),
+                          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                           contentColor: messageColor!,
                           duration: Duration(seconds: time),
                           contentPadding: const EdgeInsets.all(10),
@@ -1479,10 +1397,7 @@ class AddFactionDialog extends StatelessWidget {
               onTap: () {
                 warController.filterFaction(faction.id);
               },
-              child: Icon(
-                Icons.remove_red_eye_outlined,
-                color: faction.hidden! ? Colors.red : themeProvider!.mainText,
-              ),
+              child: Icon(Icons.remove_red_eye_outlined, color: faction.hidden! ? Colors.red : themeProvider!.mainText),
             ),
             const SizedBox(width: 5),
             Flexible(
@@ -1492,15 +1407,8 @@ class AddFactionDialog extends StatelessWidget {
                   padding: const EdgeInsets.all(8.0),
                   child: Column(
                     children: [
-                      Text(
-                        HtmlParser.fix(faction.name),
-                        textAlign: TextAlign.center,
-                      ),
-                      Text(
-                        "[${faction.id}]",
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 9),
-                      ),
+                      Text(HtmlParser.fix(faction.name), textAlign: TextAlign.center),
+                      Text("[${faction.id}]", textAlign: TextAlign.center, style: const TextStyle(fontSize: 9)),
                     ],
                   ),
                 ),
@@ -1522,11 +1430,7 @@ class AddFactionDialog extends StatelessWidget {
 }
 
 class HiddenMembersDialog extends StatelessWidget {
-  const HiddenMembersDialog({
-    super.key,
-    required this.themeProvider,
-    required this.warController,
-  });
+  const HiddenMembersDialog({super.key, required this.themeProvider, required this.warController});
 
   final ThemeProvider? themeProvider;
   final WarController warController;
@@ -1537,9 +1441,7 @@ class HiddenMembersDialog extends StatelessWidget {
     List<Widget> hiddenCards = buildCards(hiddenMembers, context);
     return AlertDialog(
       backgroundColor: themeProvider!.secondBackground,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       actions: [
         TextButton(
           child: const Text("Close"),
@@ -1554,17 +1456,9 @@ class HiddenMembersDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              "Reset hidden targets",
-              style: TextStyle(fontSize: 14),
-            ),
+            const Text("Reset hidden targets", style: TextStyle(fontSize: 14)),
             const SizedBox(height: 20),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: hiddenCards,
-              ),
-            ),
+            Flexible(child: ListView(shrinkWrap: true, children: hiddenCards)),
           ],
         ),
       ),
@@ -1597,14 +1491,8 @@ class HiddenMembersDialog extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            m!.name!,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          Text(
-                            "Level ${m.level}",
-                            style: const TextStyle(fontSize: 13),
-                          ),
+                          Text(m!.name!, style: const TextStyle(fontSize: 13)),
+                          Text("Level ${m.level}", style: const TextStyle(fontSize: 13)),
                         ],
                       ),
                       Row(
@@ -1616,10 +1504,7 @@ class HiddenMembersDialog extends StatelessWidget {
                             color: themeProvider!.mainText,
                           ),
                           const SizedBox(width: 5),
-                          Text(
-                            m.factionName!,
-                            style: const TextStyle(fontSize: 13),
-                          ),
+                          Text(m.factionName!, style: const TextStyle(fontSize: 13)),
                         ],
                       ),
                     ],
@@ -1689,12 +1574,7 @@ class WarTargetsListState extends State<WarTargetsList> {
       itemBuilder: (context, index) {
         if (index == pinnedMembersCount && index != 0) {
           // Add the first unpinned card preceded by the separator
-          return Column(
-            children: [
-              separator,
-              slidableCard(filteredCards[index]),
-            ],
-          );
+          return Column(children: [separator, slidableCard(filteredCards[index])]);
         }
         return slidableCard(filteredCards[index]);
       },
@@ -1742,10 +1622,7 @@ class WarTargetsListState extends State<WarTargetsList> {
       }
 
       if (widget.countryFilterActive &&
-          countryCheck(
-                state: thisMember.status!.state,
-                description: thisMember.status!.description,
-              ) !=
+          countryCheck(state: thisMember.status!.state, description: thisMember.status!.description) !=
               widget.warController.playerLocation) {
         continue;
       }
@@ -1794,9 +1671,8 @@ class WarTargetsListState extends State<WarTargetsList> {
         }
 
         if (settings.fairFightRange != null) {
-          if (thisMember.fairFight == null ||
-              thisMember.fairFight! < settings.fairFightRange!.start ||
-              thisMember.fairFight! > settings.fairFightRange!.end) {
+          double effFF = widget.warController.getEffectiveFairFight(thisMember);
+          if (effFF == -1 || effFF < settings.fairFightRange!.start || effFF > settings.fairFightRange!.end) {
             continue;
           }
         }
@@ -1872,13 +1748,9 @@ class WarTargetsListState extends State<WarTargetsList> {
 
       //filteredCards.add(WarCard(memberModel: thisMember));
       if (thisMember.pinned) {
-        pinnedMembers.add(
-          WarCard(memberModel: thisMember),
-        );
+        pinnedMembers.add(WarCard(memberModel: thisMember));
       } else {
-        nonPinnedMembers.add(
-          WarCard(memberModel: thisMember),
-        );
+        nonPinnedMembers.add(WarCard(memberModel: thisMember));
       }
     }
 
@@ -1967,10 +1839,7 @@ class WarTargetsListState extends State<WarTargetsList> {
                 BotToast.showText(
                   clickClose: true,
                   text: message,
-                  textStyle: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white,
-                  ),
+                  textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                   contentColor: messageColor!,
                   duration: const Duration(seconds: 5),
                   contentPadding: const EdgeInsets.all(10),
@@ -1999,10 +1868,7 @@ class WarTargetsListState extends State<WarTargetsList> {
                 BotToast.showText(
                   clickClose: true,
                   text: message,
-                  textStyle: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white,
-                  ),
+                  textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                   contentColor: messageColor,
                   duration: const Duration(seconds: 5),
                   contentPadding: const EdgeInsets.all(10),

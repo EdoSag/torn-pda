@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 
 // Flutter imports:
 import 'package:flutter/material.dart';
@@ -23,26 +24,13 @@ import 'package:torn_pda/utils/live_activities/live_activity_bridge.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 import 'package:torn_pda/utils/travel/travel_times.dart';
 
-enum BrowserSetting {
-  app,
-  external,
-}
+enum BrowserSetting { app, external }
 
-enum TimeFormatSetting {
-  h24,
-  h12,
-}
+enum TimeFormatSetting { h24, h12 }
 
-enum TimeZoneSetting {
-  localTime,
-  tornTime,
-}
+enum TimeZoneSetting { localTime, tornTime }
 
-enum BrowserRefreshSetting {
-  icon,
-  pull,
-  both,
-}
+enum BrowserRefreshSetting { icon, pull, both }
 
 class PdaUpdateDetails {
   final int latestVersionCode;
@@ -156,11 +144,11 @@ class SettingsProvider extends ChangeNotifier {
     Prefs().setAndroidBrowserScale(_androidBrowserScale);
   }
 
-  var _androidBrowserTextScale = 8;
-  int get androidBrowserTextScale => _androidBrowserTextScale;
-  set changeAndroidBrowserTextScale(int choice) {
-    _androidBrowserTextScale = choice;
-    Prefs().setAndroidBrowserTextScale(_androidBrowserTextScale);
+  var _androidBrowserTextZoom = 100;
+  int get androidBrowserTextZoom => _androidBrowserTextZoom;
+  set changeAndroidBrowserTextZoom(int choice) {
+    _androidBrowserTextZoom = choice;
+    Prefs().setAndroidBrowserTextZoom(_androidBrowserTextZoom);
     notifyListeners();
   }
 
@@ -213,6 +201,39 @@ class SettingsProvider extends ChangeNotifier {
   bool get browserCenterEditingTextFieldRemoteConfigAllowed => _browserCenterEditingTextFieldRemoteConfigAllowed;
   set browserCenterEditingTextFieldRemoteConfigAllowed(bool value) {
     _browserCenterEditingTextFieldRemoteConfigAllowed = value;
+    notifyListeners();
+  }
+
+  // #467 focus-restore kill-switch (RemoteConfig)
+  bool _browserRestoreWebViewFocusRemoteConfigAllowed = true;
+  bool get browserRestoreWebViewFocusRemoteConfigAllowed => _browserRestoreWebViewFocusRemoteConfigAllowed;
+  set browserRestoreWebViewFocusRemoteConfigAllowed(bool value) {
+    _browserRestoreWebViewFocusRemoteConfigAllowed = value;
+    notifyListeners();
+  }
+
+  // #2843 engine-prewarm kill-switch (RemoteConfig): warms the Android WebView engine on cold start
+  bool _browserEnginePrewarmRemoteConfigAllowed = true;
+  bool get browserEnginePrewarmRemoteConfigAllowed => _browserEnginePrewarmRemoteConfigAllowed;
+  set browserEnginePrewarmRemoteConfigAllowed(bool value) {
+    _browserEnginePrewarmRemoteConfigAllowed = value;
+    notifyListeners();
+  }
+
+  // #2843 watchdog auto-recovery kill-switch (RemoteConfig): rebuilds a webview whose onWebViewCreated never fired
+  bool _browserWebViewRecoveryRemoteConfigAllowed = true;
+  bool get browserWebViewRecoveryRemoteConfigAllowed => _browserWebViewRecoveryRemoteConfigAllowed;
+  set browserWebViewRecoveryRemoteConfigAllowed(bool value) {
+    _browserWebViewRecoveryRemoteConfigAllowed = value;
+    notifyListeners();
+  }
+
+  // Android renderer-gone handling kill-switch (RemoteConfig): when off, useOnRenderProcessGone is not set,
+  // so an OOM / crashed webview might kills the whole app
+  bool _browserRenderProcessGoneRemoteConfigAllowed = true;
+  bool get browserRenderProcessGoneRemoteConfigAllowed => _browserRenderProcessGoneRemoteConfigAllowed;
+  set browserRenderProcessGoneRemoteConfigAllowed(bool value) {
+    _browserRenderProcessGoneRemoteConfigAllowed = value;
     notifyListeners();
   }
 
@@ -313,6 +334,14 @@ class SettingsProvider extends ChangeNotifier {
   set changeLoadBarBrowser(bool value) {
     _loadBarBrowser = value;
     Prefs().setLoadBarBrowser(_loadBarBrowser);
+    notifyListeners();
+  }
+
+  var _restoreScrollAfterReload = true;
+  bool get restoreScrollAfterReload => _restoreScrollAfterReload;
+  set restoreScrollAfterReload(bool value) {
+    _restoreScrollAfterReload = value;
+    Prefs().setRestoreScrollAfterReload(_restoreScrollAfterReload);
     notifyListeners();
   }
 
@@ -529,6 +558,22 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _travelNotificationTapAction = "browser";
+  String get travelNotificationTapAction => _travelNotificationTapAction;
+  set travelNotificationTapAction(value) {
+    _travelNotificationTapAction = value;
+    Prefs().setTravelNotificationTapAction(_travelNotificationTapAction);
+    notifyListeners();
+  }
+
+  var _travelLiveActivityTapAction = "browser";
+  String get travelLiveActivityTapAction => _travelLiveActivityTapAction;
+  set travelLiveActivityTapAction(value) {
+    _travelLiveActivityTapAction = value;
+    Prefs().setTravelLiveActivityTapAction(_travelLiveActivityTapAction);
+    notifyListeners();
+  }
+
   var _fullScreenByDeepLinkTap = false;
   bool get fullScreenByDeepLinkTap => _fullScreenByDeepLinkTap;
   set fullScreenByDeepLinkTap(bool value) {
@@ -601,6 +646,14 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _androidFastKeyboard = false;
+  bool get androidFastKeyboard => _androidFastKeyboard;
+  set androidFastKeyboard(bool value) {
+    _androidFastKeyboard = value;
+    Prefs().setAndroidFastKeyboard(_androidFastKeyboard);
+    notifyListeners();
+  }
+
   var _removeForeignItemsDetails = false;
   bool get removeForeignItemsDetails => _removeForeignItemsDetails;
   set removeForeignItemsDetails(bool value) {
@@ -614,6 +667,22 @@ class SettingsProvider extends ChangeNotifier {
   set preventBasketKeyboard(bool value) {
     _preventBasketKeyboard = value;
     Prefs().setPreventBasketKeyboard(_preventBasketKeyboard);
+    notifyListeners();
+  }
+
+  var _cityShopsBuyMaxEnabled = true;
+  bool get cityShopsBuyMaxEnabled => _cityShopsBuyMaxEnabled;
+  set cityShopsBuyMaxEnabled(bool value) {
+    _cityShopsBuyMaxEnabled = value;
+    Prefs().setCityShopsBuyMaxEnabled(_cityShopsBuyMaxEnabled);
+    notifyListeners();
+  }
+
+  var _foreignStocksBuyMaxEnabled = true;
+  bool get foreignStocksBuyMaxEnabled => _foreignStocksBuyMaxEnabled;
+  set foreignStocksBuyMaxEnabled(bool value) {
+    _foreignStocksBuyMaxEnabled = value;
+    Prefs().setForeignStocksBuyMaxEnabled(_foreignStocksBuyMaxEnabled);
     notifyListeners();
   }
 
@@ -786,6 +855,14 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _bountyAlertEnabled = true;
+  bool get bountyAlertEnabled => _bountyAlertEnabled;
+  set changeBountyAlertEnabled(bool value) {
+    _bountyAlertEnabled = value;
+    Prefs().setBountyAlertEnabled(_bountyAlertEnabled);
+    notifyListeners();
+  }
+
   var _hitInMiniProfileOpensNewTab = false;
   bool get hitInMiniProfileOpensNewTab => _hitInMiniProfileOpensNewTab;
   set hitInMiniProfileOpensNewTab(bool value) {
@@ -869,9 +946,7 @@ class SettingsProvider extends ChangeNotifier {
         DeviceOrientation.landscapeRight,
       ]);
     } else {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-      ]);
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     }
 
     Prefs().setAllowScreenRotation(_allowScreenRotation);
@@ -891,6 +966,14 @@ class SettingsProvider extends ChangeNotifier {
   set educationBarEnabled(bool value) {
     _educationBarEnabled = value;
     Prefs().setEducationBarEnabled(value);
+    notifyListeners();
+  }
+
+  bool _virusBarEnabled = true;
+  bool get virusBarEnabled => _virusBarEnabled;
+  set virusBarEnabled(bool value) {
+    _virusBarEnabled = value;
+    Prefs().setVirusBarEnabled(value);
     notifyListeners();
   }
 
@@ -985,11 +1068,27 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _travelDrugCooldownWarningThreshold = 0;
+  int get travelDrugCooldownWarningThreshold => _travelDrugCooldownWarningThreshold;
+  set travelDrugCooldownWarningThreshold(int choice) {
+    _travelDrugCooldownWarningThreshold = choice;
+    Prefs().setTravelDrugCooldownWarningThreshold(_travelDrugCooldownWarningThreshold);
+    notifyListeners();
+  }
+
   var _travelBoosterCooldownWarning = true;
   bool get travelBoosterCooldownWarning => _travelBoosterCooldownWarning;
   set travelBoosterCooldownWarning(bool choice) {
     _travelBoosterCooldownWarning = choice;
     Prefs().setTravelBoosterCooldownWarning(_travelBoosterCooldownWarning);
+    notifyListeners();
+  }
+
+  var _travelBoosterCooldownWarningThreshold = 0;
+  int get travelBoosterCooldownWarningThreshold => _travelBoosterCooldownWarningThreshold;
+  set travelBoosterCooldownWarningThreshold(int choice) {
+    _travelBoosterCooldownWarningThreshold = choice;
+    Prefs().setTravelBoosterCooldownWarningThreshold(_travelBoosterCooldownWarningThreshold);
     notifyListeners();
   }
 
@@ -1303,6 +1402,14 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _hideProfileFab = false;
+  bool get hideProfileFab => _hideProfileFab;
+  set hideProfileFab(bool value) {
+    _hideProfileFab = value;
+    Prefs().setHideProfileFab(value);
+    notifyListeners();
+  }
+
   var _profileCheckAttackEnabled = true;
   bool get profileCheckAttackEnabled => _profileCheckAttackEnabled;
   set profileCheckAttackEnabled(bool value) {
@@ -1428,6 +1535,20 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  String _reviveCombatReadyPrice = "1.5 million or 2 Xanax";
+  String get reviveCombatReadyPrice => _reviveCombatReadyPrice;
+  set reviveCombatReadyPrice(String value) {
+    _reviveCombatReadyPrice = value;
+    notifyListeners();
+  }
+
+  String _reviveAsclepiusPrice = "\$1M";
+  String get reviveAsclepiusPrice => _reviveAsclepiusPrice;
+  set reviveAsclepiusPrice(String value) {
+    _reviveAsclepiusPrice = value;
+    notifyListeners();
+  }
+
   bool _tctClockHighlightsEvents = true;
   bool get tctClockHighlightsEvents => _tctClockHighlightsEvents;
   set tctClockHighlightsEvents(bool value) {
@@ -1441,6 +1562,22 @@ class SettingsProvider extends ChangeNotifier {
   set showWikiInDrawer(bool value) {
     _showWikiInDrawer = value;
     Prefs().setShowWikiInDrawer(value);
+    notifyListeners();
+  }
+
+  List<String> _drawerSectionOrder = [];
+  List<String> get drawerSectionOrder => _drawerSectionOrder;
+  set drawerSectionOrder(List<String> value) {
+    _drawerSectionOrder = value;
+    Prefs().setDrawerSectionOrder(value);
+    notifyListeners();
+  }
+
+  List<String> _drawerSectionHidden = [];
+  List<String> get drawerSectionHidden => _drawerSectionHidden;
+  set drawerSectionHidden(List<String> value) {
+    _drawerSectionHidden = value;
+    Prefs().setDrawerSectionHidden(value);
     notifyListeners();
   }
 
@@ -1491,11 +1628,38 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
+  bool _iosLiveActivitiesRacingEnabled = false;
+  bool get iosLiveActivityRacingEnabled => _iosLiveActivitiesRacingEnabled;
+  set iosLiveActivityRacingEnabled(bool enabled) {
+    _iosLiveActivitiesRacingEnabled = enabled;
+    Prefs().setIosLiveActivityRacingEnabled(enabled);
+    notifyListeners();
+
+    if (enabled) {
+      if (kSdkIos >= 17.2) {
+        log("Racing Live Activities enabled by user. Requesting push-to-start token...");
+        final bridgeController = Get.find<LiveActivityBridgeController>();
+        bridgeController.getPushToStartTokenAndSendToFirebase(force: true, activityType: LiveActivityType.racing);
+      }
+    } else {
+      FirestoreHelper().disableLiveActivityRacing();
+      Prefs().setLaPushToken(token: null, activityType: LiveActivityType.racing);
+    }
+  }
+
   bool _androidLiveActivitiesTravelEnabled = false;
   bool get androidLiveActivityTravelEnabled => _androidLiveActivitiesTravelEnabled;
   set androidLiveActivityTravelEnabled(bool enabled) {
     _androidLiveActivitiesTravelEnabled = enabled;
     Prefs().setAndroidLiveActivityTravelEnabled(enabled);
+    notifyListeners();
+  }
+
+  bool _androidLiveActivitiesRacingEnabled = false;
+  bool get androidLiveActivityRacingEnabled => _androidLiveActivitiesRacingEnabled;
+  set androidLiveActivityRacingEnabled(bool enabled) {
+    _androidLiveActivitiesRacingEnabled = enabled;
+    Prefs().setAndroidLiveActivityRacingEnabled(enabled);
     notifyListeners();
   }
 
@@ -1519,9 +1683,10 @@ class SettingsProvider extends ChangeNotifier {
     _disableUpdateDialog = await Prefs().getPdaUpdateDialogDisabled();
 
     _androidBrowserScale = await Prefs().getAndroidBrowserScale();
-    _androidBrowserTextScale = await Prefs().getAndroidBrowserTextScale();
+    _androidBrowserTextZoom = await Prefs().getAndroidBrowserTextZoom();
 
     _androidLiveActivitiesTravelEnabled = await Prefs().getAndroidLiveActivityTravelEnabled();
+    _androidLiveActivitiesRacingEnabled = await Prefs().getAndroidLiveActivityRacingEnabled();
 
     // Gestures
     _iosBrowserPinch = await Prefs().getIosBrowserPinch();
@@ -1531,6 +1696,7 @@ class SettingsProvider extends ChangeNotifier {
     _browserExtendHeightForKeyboard = await Prefs().getBrowserExtendHeightForKeyboard();
 
     _loadBarBrowser = await Prefs().getLoadBarBrowser();
+    _restoreScrollAfterReload = await Prefs().getRestoreScrollAfterReload();
     _highRefreshRateEnabled = await Prefs().getHighRefreshRateEnabled();
 
     _useTabsFullBrowser = await Prefs().getUseTabsFullBrowser();
@@ -1564,6 +1730,8 @@ class SettingsProvider extends ChangeNotifier {
     _drugsNotificationTapAction = await Prefs().getDrugsNotificationTapAction();
     _medicalNotificationTapAction = await Prefs().getMedicalNotificationTapAction();
     _boosterNotificationTapAction = await Prefs().getBoosterNotificationTapAction();
+    _travelNotificationTapAction = await Prefs().getTravelNotificationTapAction();
+    _travelLiveActivityTapAction = await Prefs().getTravelLiveActivityTapAction();
 
     final refresh = await Prefs().getBrowserRefreshMethod();
     switch (refresh) {
@@ -1586,8 +1754,11 @@ class SettingsProvider extends ChangeNotifier {
     _highlightWordList = await Prefs().getHighlightWordList();
 
     _removeAirplane = await Prefs().getRemoveAirplane();
+    _androidFastKeyboard = await Prefs().getAndroidFastKeyboard();
     _removeForeignItemsDetails = await Prefs().getRemoveForeignItemsDetails();
     _preventBasketKeyboard = await Prefs().getPreventBasketKeyboard();
+    _cityShopsBuyMaxEnabled = await Prefs().getCityShopsBuyMaxEnabled();
+    _foreignStocksBuyMaxEnabled = await Prefs().getForeignStocksBuyMaxEnabled();
     _removeTravelQuickReturnButton = await Prefs().getRemoveTravelQuickReturnButton();
 
     _extraPlayerInformation = await Prefs().getExtraPlayerInformation();
@@ -1612,6 +1783,7 @@ class SettingsProvider extends ChangeNotifier {
     _notesWidgetEnabledProfile = await Prefs().getNotesWidgetEnabledProfile();
     _notesWidgetEnabledProfileWhenEmpty = await Prefs().getNotesWidgetEnabledProfileWhenEmpty();
     _extraPlayerNetworth = await Prefs().getExtraPlayerNetworth();
+    _bountyAlertEnabled = await Prefs().getBountyAlertEnabled();
 
     _hitInMiniProfileOpensNewTab = await Prefs().getHitInMiniProfileOpensNewTab();
     _hitInMiniProfileOpensNewTabAndChangeTab = await Prefs().getHitInMiniProfileOpensNewTabAndChangeTab();
@@ -1664,6 +1836,8 @@ class SettingsProvider extends ChangeNotifier {
 
     _educationBarEnabled = await Prefs().getEducationBarEnabled();
 
+    _virusBarEnabled = await Prefs().getVirusBarEnabled();
+
     _colorCodedStatusCard = await Prefs().getColorCodedStatusCard();
 
     _iosAllowLinkPreview = await Prefs().getIosAllowLinkPreview();
@@ -1679,7 +1853,9 @@ class SettingsProvider extends ChangeNotifier {
     _travelLifeExcessWarning = await Prefs().getTravelLifeExcessWarning();
     _travelLifeExcessWarningThreshold = await Prefs().getTravelLifeExcessWarningThreshold();
     _travelDrugCooldownWarning = await Prefs().getTravelDrugCooldownWarning();
+    _travelDrugCooldownWarningThreshold = await Prefs().getTravelDrugCooldownWarningThreshold();
     _travelBoosterCooldownWarning = await Prefs().getTravelBoosterCooldownWarning();
+    _travelBoosterCooldownWarningThreshold = await Prefs().getTravelBoosterCooldownWarningThreshold();
     _travelWalletMoneyWarning = await Prefs().getTravelWalletMoneyWarning();
     _travelWalletMoneyWarningThreshold = await Prefs().getTravelWalletMoneyWarningThreshold();
 
@@ -1737,6 +1913,7 @@ class SettingsProvider extends ChangeNotifier {
     _debugMessages = logAndShowToUser = await Prefs().getDebugMessages();
 
     _shortcutsEnabledProfile = await Prefs().getShortcutsEnabledProfile();
+    _hideProfileFab = await Prefs().getHideProfileFab();
     _profileCheckAttackEnabled = await Prefs().getProfileCheckAttackEnabled();
     _showShortcutEditIcon = await Prefs().getShowShortcutEditIcon();
 
@@ -1755,13 +1932,24 @@ class SettingsProvider extends ChangeNotifier {
 
     _showWikiInDrawer = await Prefs().getShowWikiInDrawer();
 
+    _drawerSectionOrder = await Prefs().getDrawerSectionOrder();
+    _drawerSectionHidden = await Prefs().getDrawerSectionHidden();
+
+    // First time initialization: hide divider2 by default
+    if (_drawerSectionOrder.isEmpty && _drawerSectionHidden.isEmpty) {
+      _drawerSectionHidden = ['divider2'];
+      Prefs().setDrawerSectionHidden(_drawerSectionHidden);
+    }
+
     await WebviewConfig().generateUserAgentForUser();
 
     _showMemoryInDrawer = await Prefs().getShowMemoryInDrawer();
     _showMemoryInWebview = await Prefs().getShowMemoryInWebview();
 
     _androidLiveActivitiesTravelEnabled = await Prefs().getAndroidLiveActivityTravelEnabled();
+    _androidLiveActivitiesRacingEnabled = await Prefs().getAndroidLiveActivityRacingEnabled();
     _iosLiveActivitiesTravelEnabled = await Prefs().getIosLiveActivityTravelEnabled();
+    _iosLiveActivitiesRacingEnabled = await Prefs().getIosLiveActivityRacingEnabled();
 
     _joblessWarningEnabled = await Prefs().getJoblessWarningEnabled();
 
@@ -1791,8 +1979,9 @@ class SettingsProvider extends ChangeNotifier {
       final stValentineEnd = DateTime(now.year, 02, 15, 10, 30);
       final stPatrickStart = DateTime(now.year, 03, 16, 10, 30);
       final stPatrickEnd = DateTime(now.year, 03, 18, 10, 30);
-      final easterStart = DateTime(now.year, 04, 17, 10, 30);
-      final easterEnd = DateTime(now.year, 04, 24, 10, 30);
+      final easterSunday = _calculateEasterSunday(now.year);
+      final easterStart = easterSunday.subtract(const Duration(days: 3)).add(const Duration(hours: 10, minutes: 30));
+      final easterEnd = easterSunday.add(const Duration(days: 4)).add(const Duration(hours: 10, minutes: 30));
       final halloweenStart = DateTime(now.year, 10, 25);
       final halloweenEnd = DateTime(now.year, 11, 1, 23, 59, 59);
       final christmasStart = DateTime(now.year, 12, 19);
@@ -1865,6 +2054,25 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
+  /// Calculates Easter Sunday for a given year
+  static DateTime _calculateEasterSunday(int year) {
+    final a = year % 19;
+    final b = year ~/ 100;
+    final c = year % 100;
+    final d = b ~/ 4;
+    final e = b % 4;
+    final f = (b + 8) ~/ 25;
+    final g = (b - f + 1) ~/ 3;
+    final h = (19 * a + b - d - g + 15) % 30;
+    final i = c ~/ 4;
+    final k = c % 4;
+    final l = (32 + 2 * e + 2 * i - h - k) % 7;
+    final m = (a + 11 * h + 22 * l) ~/ 451;
+    final month = (h + l - 7 * m + 114) ~/ 31;
+    final day = (h + l - 7 * m + 114) % 31 + 1;
+    return DateTime(year, month, day);
+  }
+
   /// Determine whether the user is still using OC v1 or is already in OC v2
   /// This will be used by several client widgets to call the appropriate API
   ///
@@ -1905,6 +2113,10 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> configureRefreshRate() async {
+    // The plugin calls View.getRootSurfaceControl() (API 31) unguarded, and the
+    // resulting NoSuchMethodError is an Error
+    if (Platform.isAndroid && kSdkAndroid < 31) return;
+
     try {
       if (_highRefreshRateEnabled) {
         final success = await _refreshRateControl.requestHighRefreshRate();

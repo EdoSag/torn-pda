@@ -19,6 +19,9 @@ import com.manuito.tornpda.liveupdates.LiveUpdateNotificationChannel;
 import android.os.Bundle;
 import android.window.SplashScreenView;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsAnimationCompat;
+import androidx.core.view.WindowInsetsCompat;
 import android.appwidget.AppWidgetManager;
 import android.os.PowerManager;
 import android.app.ActivityManager;
@@ -36,7 +39,23 @@ public class MainActivity extends FlutterActivity {
         // Aligns the Flutter view vertically with the window.
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        ViewCompat.setWindowInsetsAnimationCallback(
+                getWindow().getDecorView(),
+                new WindowInsetsAnimationCompat.Callback(WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP) {
+                    @NonNull
+                    @Override
+                    public WindowInsetsCompat onProgress(
+                            @NonNull WindowInsetsCompat insets,
+                            @NonNull List<WindowInsetsAnimationCompat> runningAnimations) {
+                        return insets;
+                    }
+                });
+
+        // Skipped on Android 13: registering the listener makes the system transfer the
+        // splash view, which crashes in ActivityThread.syncTransferSplashscreenViewTransaction
+        // on OPPO/realme/OnePlus ROMs (SurfaceControl already released)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && Build.VERSION.SDK_INT != Build.VERSION_CODES.TIRAMISU) {
             // Disable the Android splash screen fade out animation to avoid
             // a flicker before the similar frame is drawn in Flutter.
             getSplashScreen()
@@ -145,7 +164,8 @@ public class MainActivity extends FlutterActivity {
             for (StatusBarNotification notification : activeNotifications) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     String channelId = notification.getNotification().getChannelId();
-                    if (LiveUpdateNotificationChannel.CHANNEL_ID.equals(channelId)) {
+                    if (LiveUpdateNotificationChannel.TRAVEL_CHANNEL_ID.equals(channelId)
+                            || LiveUpdateNotificationChannel.RACING_CHANNEL_ID.equals(channelId)) {
                         continue;
                     }
                 }

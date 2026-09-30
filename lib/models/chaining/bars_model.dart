@@ -176,6 +176,8 @@ class Basicicons {
   String? icon27;
   String? icon9;
   String? icon35;
+  String? icon17;
+  String? icon18;
 
   Basicicons({
     this.icon6,
@@ -185,6 +187,8 @@ class Basicicons {
     this.icon27,
     this.icon9,
     this.icon35,
+    this.icon17,
+    this.icon18,
   });
 
   factory Basicicons.fromJson(Map<String, dynamic> json) => Basicicons(
@@ -195,6 +199,8 @@ class Basicicons {
         icon27: json["icon27"],
         icon9: json["icon9"],
         icon35: json["icon35"],
+        icon17: json["icon17"],
+        icon18: json["icon18"],
       );
 
   Map<String, dynamic> toJson() => {
@@ -205,6 +211,8 @@ class Basicicons {
         "icon27": icon27,
         "icon9": icon9,
         "icon35": icon35,
+        "icon17": icon17,
+        "icon18": icon18,
       };
 }
 
@@ -463,18 +471,21 @@ class Status {
 class Travel {
   Travel({
     this.destination,
+    this.method,
     this.timestamp,
     this.departed,
     this.timeLeft,
   });
 
   String? destination;
+  String? method;
   int? timestamp;
   int? departed;
   int? timeLeft;
 
   factory Travel.fromJson(Map<String, dynamic> json) => Travel(
         destination: json["destination"],
+        method: json["method"],
         timestamp: json["timestamp"],
         departed: json["departed"],
         timeLeft: json["time_left"],
@@ -482,6 +493,7 @@ class Travel {
 
   Map<String, dynamic> toJson() => {
         "destination": destination,
+        "method": method,
         "timestamp": timestamp,
         "departed": departed,
         "time_left": timeLeft,

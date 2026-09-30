@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:torn_pda/utils/telemetry_sanitize.dart';
 import 'package:http/http.dart' as http;
+import 'package:torn_pda/models/chaining/ffscouter/ffscouter_activity_model.dart';
+import 'package:torn_pda/models/chaining/ffscouter/ffscouter_flights_model.dart';
 import 'package:torn_pda/models/chaining/ffscouter/ffscouter_key_models.dart';
 import 'package:torn_pda/models/chaining/ffscouter/ffscouter_stats_model.dart';
 import 'package:torn_pda/models/chaining/ffscouter/ffscouter_targets_model.dart';
@@ -20,6 +24,12 @@ class FFScouterResult<T> {
 class FFScouterComm {
   static const String _baseUrl = 'https://ffscouter.com/api/v1';
 
+  static void _logError(String method, Object e, StackTrace stackTrace) {
+    log("FFScouterComm.$method error: $e");
+    if (e is SocketException || e is http.ClientException || e is HandshakeException) return;
+    FirebaseCrashlytics.instance.recordError(redactUrlQueries("FFScouter $method error: $e"), stackTrace);
+  }
+
   /// Fetches battle stats estimates for up to 205 targets at once
   /// Rate limit: 20 requests per minute per IP
   static Future<FFScouterResult<List<FFScouterPlayerStats>>> getStats({
@@ -29,10 +39,7 @@ class FFScouterComm {
   }) async {
     try {
       if (targetIds.isEmpty || targetIds.length > 205) {
-        return FFScouterResult(
-          success: false,
-          errorMessage: "Target list must contain between 1 and 205 IDs",
-        );
+        return FFScouterResult(success: false, errorMessage: "Target list must contain between 1 and 205 IDs");
       }
 
       final targetsParam = targetIds.join(',');
@@ -45,17 +52,12 @@ class FFScouterComm {
         return FFScouterResult(success: true, data: stats);
       } else {
         final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
-        return FFScouterResult(
-          success: false,
-          errorMessage: error.error ?? "Unknown error",
-          errorCode: error.code,
-        );
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
       }
     } on TimeoutException {
       return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
     } catch (e, stackTrace) {
-      log("FFScouterComm.getStats error: $e");
-      FirebaseCrashlytics.instance.recordError("FFScouter getStats error: $e", stackTrace);
+      _logError("getStats", e, stackTrace);
       return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
     }
   }
@@ -99,17 +101,12 @@ class FFScouterComm {
         return FFScouterResult(success: true, data: data);
       } else {
         final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
-        return FFScouterResult(
-          success: false,
-          errorMessage: error.error ?? "Unknown error",
-          errorCode: error.code,
-        );
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
       }
     } on TimeoutException {
       return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
     } catch (e, stackTrace) {
-      log("FFScouterComm.getTargets error: $e");
-      FirebaseCrashlytics.instance.recordError("FFScouter getTargets error: $e", stackTrace);
+      _logError("getTargets", e, stackTrace);
       return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
     }
   }
@@ -117,10 +114,7 @@ class FFScouterComm {
   /// Checks whether an API key is registered with FFScouter.
   /// Rate limit: 10 requests per minute per IP.
   /// Note: this endpoint does NOT register the key or make external requests.
-  static Future<FFScouterResult<FFScouterCheckKeyResponse>> checkKey({
-    required String key,
-    int timeout = 15,
-  }) async {
+  static Future<FFScouterResult<FFScouterCheckKeyResponse>> checkKey({required String key, int timeout = 15}) async {
     try {
       final uri = Uri.parse('$_baseUrl/check-key?key=$key');
       final response = await http.get(uri).timeout(Duration(seconds: timeout));
@@ -130,17 +124,12 @@ class FFScouterComm {
         return FFScouterResult(success: true, data: data);
       } else {
         final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
-        return FFScouterResult(
-          success: false,
-          errorMessage: error.error ?? "Unknown error",
-          errorCode: error.code,
-        );
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
       }
     } on TimeoutException {
       return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
     } catch (e, stackTrace) {
-      log("FFScouterComm.checkKey error: $e");
-      FirebaseCrashlytics.instance.recordError("FFScouter checkKey error: $e", stackTrace);
+      _logError("checkKey", e, stackTrace);
       return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
     }
   }
@@ -149,24 +138,13 @@ class FFScouterComm {
   /// Rate limit: 3 requests per minute per IP.
   /// IMPORTANT: The user MUST have agreed to FFScouter's data policy and terms
   /// before calling this method (required by Torn rules).
-  static Future<FFScouterResult<FFScouterRegisterResponse>> registerKey({
-    required String key,
-    int timeout = 20,
-  }) async {
+  static Future<FFScouterResult<FFScouterRegisterResponse>> registerKey({required String key, int timeout = 20}) async {
     try {
       final uri = Uri.parse('$_baseUrl/register');
-      final body = json.encode({
-        'key': key,
-        'agree_to_data_policy': true,
-        'signup_source': 'TornPDA',
-      });
+      final body = json.encode({'key': key, 'agree_to_data_policy': true, 'signup_source': 'TornPDA'});
 
       final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: body,
-          )
+          .post(uri, headers: {'Content-Type': 'application/json'}, body: body)
           .timeout(Duration(seconds: timeout));
 
       if (response.statusCode == 200) {
@@ -174,17 +152,106 @@ class FFScouterComm {
         return FFScouterResult(success: true, data: data);
       } else {
         final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
-        return FFScouterResult(
-          success: false,
-          errorMessage: error.error ?? "Unknown error",
-          errorCode: error.code,
-        );
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
       }
     } on TimeoutException {
       return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
     } catch (e, stackTrace) {
-      log("FFScouterComm.registerKey error: $e");
-      FirebaseCrashlytics.instance.recordError("FFScouter registerKey error: $e", stackTrace);
+      _logError("registerKey", e, stackTrace);
+      return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
+    }
+  }
+
+  /// Flight info for a single [target] (premium), 100 req/min
+  /// Error 19 = no premium; error 22 = no flight data for this target
+  static Future<FFScouterResult<FFScouterFlightsResponse>> getPlayerFlights({
+    required String key,
+    required int target,
+    int timeout = 15,
+  }) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/player-flights?key=$key&target=$target');
+      final response = await http.get(uri).timeout(Duration(seconds: timeout));
+
+      if (response.statusCode == 200) {
+        final data = ffScouterFlightsFromJson(response.body);
+        return FFScouterResult(success: true, data: data);
+      } else {
+        final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
+      }
+    } on TimeoutException {
+      return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
+    } catch (e, stackTrace) {
+      _logError("getPlayerFlights", e, stackTrace);
+      return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
+    }
+  }
+
+  /// Per-player activity buckets (premium), bucket = 300/900/3600
+  static Future<FFScouterResult<FFScouterActivityResponse>> getActivityPlayer({
+    required String key,
+    required int target,
+    required int start,
+    required int end,
+    int bucket = 900,
+    int timeout = 20,
+  }) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/activity/player').replace(
+        queryParameters: {
+          'key': key,
+          'target': target.toString(),
+          'start': start.toString(),
+          'end': end.toString(),
+          'bucket': bucket.toString(),
+        },
+      );
+      final response = await http.get(uri).timeout(Duration(seconds: timeout));
+      if (response.statusCode == 200) {
+        return FFScouterResult(success: true, data: ffScouterActivityFromJson(response.body));
+      } else {
+        final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
+      }
+    } on TimeoutException {
+      return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
+    } catch (e, stackTrace) {
+      _logError("getActivityPlayer", e, stackTrace);
+      return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
+    }
+  }
+
+  /// Faction activity buckets (premium), bucket = 300/900/3600
+  static Future<FFScouterResult<FFScouterActivityResponse>> getActivityFaction({
+    required String key,
+    required int factionId,
+    required int start,
+    required int end,
+    int bucket = 3600,
+    int timeout = 20,
+  }) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/activity/faction').replace(
+        queryParameters: {
+          'key': key,
+          'faction_id': factionId.toString(),
+          'start': start.toString(),
+          'end': end.toString(),
+          'bucket': bucket.toString(),
+        },
+      );
+      final response = await http.get(uri).timeout(Duration(seconds: timeout));
+      if (response.statusCode == 200) {
+        return FFScouterResult(success: true, data: ffScouterActivityFromJson(response.body));
+      } else {
+        final error = FFScouterErrorResponse.fromJson(json.decode(response.body));
+        return FFScouterResult(success: false, errorMessage: error.error ?? "Unknown error", errorCode: error.code);
+      }
+    } on TimeoutException {
+      return FFScouterResult(success: false, errorMessage: "Request timed out, please try again");
+    } catch (e, stackTrace) {
+      _logError("getActivityFaction", e, stackTrace);
       return FFScouterResult(success: false, errorMessage: "Error contacting FFScouter: $e");
     }
   }

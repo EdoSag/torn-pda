@@ -3,6 +3,7 @@ package com.manuito.tornpda.liveupdates
 import android.content.ContextWrapper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -57,6 +58,24 @@ class LiveUpdateEligibilityEvaluatorTest {
     }
 
     @Test
+    fun promotedNotificationsDisabledStaysEligibleButFlagsSnapshot() {
+        // Promoted chip off must NOT block the notification: we still degrade to a
+        // normal ongoing notification. The snapshot just records the flag.
+        val evaluator = createEvaluator(
+            apiLevel = 40,
+            notificationsAllowed = true,
+            promotedNotificationsAllowed = false,
+            batteryOptimized = false,
+        )
+
+        val result = evaluator.evaluate()
+
+        assertTrue(result.eligible)
+        assertNull(result.reason)
+        assertFalse(result.snapshot.promotedNotificationsEnabled)
+    }
+
+    @Test
     fun eligibleSnapshotIncludesVendor() {
         val evaluator = createEvaluator(
             apiLevel = 40,
@@ -76,6 +95,7 @@ class LiveUpdateEligibilityEvaluatorTest {
         cache: InMemoryCapabilityCache = InMemoryCapabilityCache(),
         apiLevel: Int,
         notificationsAllowed: Boolean,
+        promotedNotificationsAllowed: Boolean = true,
         batteryOptimized: Boolean,
         vendor: String = "Pixel",
     ): LiveUpdateEligibilityEvaluator {
@@ -86,6 +106,7 @@ class LiveUpdateEligibilityEvaluatorTest {
             requiredApiLevel = 35,
             apiLevelProvider = { apiLevel },
             notificationsAllowedProvider = { notificationsAllowed },
+            promotedNotificationsAllowedProvider = { promotedNotificationsAllowed },
             batteryOptimizedProvider = { batteryOptimized },
             vendorProvider = { vendor },
         )

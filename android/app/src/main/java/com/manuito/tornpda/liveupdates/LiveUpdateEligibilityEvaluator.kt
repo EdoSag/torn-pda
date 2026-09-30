@@ -1,6 +1,7 @@
 package com.manuito.tornpda.liveupdates
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -26,6 +27,7 @@ class LiveUpdateEligibilityEvaluator(
     private val requiredApiLevel: Int = DEFAULT_REQUIRED_API_LEVEL,
     private val apiLevelProvider: () -> Int = { Build.VERSION.SDK_INT },
     private val notificationsAllowedProvider: (() -> Boolean)? = null,
+    private val promotedNotificationsAllowedProvider: (() -> Boolean)? = null,
     private val batteryOptimizedProvider: (() -> Boolean)? = null,
     private val vendorProvider: () -> String = { Build.MANUFACTURER ?: "unknown" },
 ) : LiveUpdateEligibilityProvider {
@@ -46,12 +48,14 @@ class LiveUpdateEligibilityEvaluator(
     private fun buildSnapshot(): LiveUpdateCapabilitySnapshot {
         val supportedApi = apiLevelProvider() >= requiredApiLevel
         val notificationsEnabled = notificationsAllowedProvider?.invoke() ?: notificationsAllowed()
+        val promotedAllowed = promotedNotificationsAllowedProvider?.invoke() ?: promotedNotificationsAllowed()
         val batteryOptimized = batteryOptimizedProvider?.invoke() ?: isBatteryOptimized()
         val vendor = vendorProvider().ifEmpty { "unknown" }.lowercase()
         return LiveUpdateCapabilitySnapshot(
             supportedApi = supportedApi,
             oemCapsule = false,
             notificationsEnabled = notificationsEnabled,
+            promotedNotificationsEnabled = promotedAllowed,
             batteryOptimized = batteryOptimized,
             vendor = vendor,
             timestampMs = timeProvider(),
@@ -59,6 +63,9 @@ class LiveUpdateEligibilityEvaluator(
     }
 
     private fun determineReason(snapshot: LiveUpdateCapabilitySnapshot): LiveUpdateUnsupportedReason? {
+        // promotedNotificationsEnabled is NOT a hard requirement: when the user/OEM
+        // has the Android 16 promoted-chip toggle off we still post a normal ongoing
+        // notification (the plane icon). Promotion is a best-effort enhancement only.
         return when {
             !snapshot.supportedApi -> LiveUpdateUnsupportedReason.API_TOO_OLD
             !snapshot.notificationsEnabled -> LiveUpdateUnsupportedReason.PERMISSION_DENIED
@@ -78,6 +85,17 @@ class LiveUpdateEligibilityEvaluator(
             if (!granted) return false
         }
         return true
+    }
+
+    private fun promotedNotificationsAllowed(): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return true
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return true
+        return try {
+            val method = manager.javaClass.getMethod("canPostPromotedNotifications")
+            method.invoke(manager) as? Boolean ?: true
+        } catch (_: Throwable) {
+            true
+        }
     }
 
     private fun isBatteryOptimized(): Boolean {

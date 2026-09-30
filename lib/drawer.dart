@@ -31,7 +31,9 @@ import 'package:toggle_switch/toggle_switch.dart';
 import 'package:torn_pda/main.dart';
 import 'package:torn_pda/models/faction/faction_attacks_model.dart';
 import 'package:torn_pda/models/profile/own_profile_basic.dart';
+import 'package:torn_pda/models/profile/own_profile_model.dart';
 import 'package:torn_pda/models/profile/own_stats_model.dart';
+import 'package:torn_pda/models/drawer_section.dart';
 import 'package:torn_pda/models/userscript_model.dart';
 import 'package:torn_pda/pages/about.dart';
 import 'package:torn_pda/pages/alerts.dart';
@@ -51,6 +53,7 @@ import 'package:torn_pda/pages/settings/userscripts_page.dart';
 import 'package:torn_pda/pages/settings_page.dart';
 import 'package:torn_pda/pages/stakeouts_page.dart';
 import 'package:torn_pda/pages/tips_page.dart';
+import 'package:torn_pda/pages/travel/foreign_stock_page.dart';
 import 'package:torn_pda/pages/travel_page.dart';
 import 'package:torn_pda/providers/api/api_caller.dart';
 import 'package:torn_pda/providers/api/api_v1_calls.dart';
@@ -75,7 +78,9 @@ import 'package:torn_pda/utils/connectivity/connectivity_handler.dart';
 import 'package:torn_pda/utils/firebase_auth.dart';
 import 'package:torn_pda/utils/firebase_firestore.dart';
 import 'package:torn_pda/utils/live_activities/live_activity_bridge.dart';
+import 'package:torn_pda/utils/live_activities/live_activity_racing_controller.dart';
 import 'package:torn_pda/utils/live_activities/live_activity_travel_controller.dart';
+import 'package:torn_pda/utils/js_snippets/remote_snippets.dart';
 import 'package:torn_pda/utils/notification.dart';
 import 'package:torn_pda/widgets/settings/backup_local/prefs_backup_after_import_dialog.dart';
 import 'package:torn_pda/widgets/settings/backup_local/prefs_backup_from_file_dialog.dart';
@@ -108,29 +113,10 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
   @override
   bool get wantKeepAlive => true;
 
-  final int _settingsPosition = 12;
-  final int _aboutPosition = 13;
-  var _allowSectionsWithoutKey = <int>[];
+  var _allowSectionsWithoutKey = <DrawerSection>[];
 
-  // !! Note: if order is changed, remember to look for other pages calling [_callSectionFromOutside]
-  // via callback, as it might need to be changed as well
-  final _drawerItemsList = [
-    "Profile",
-    "Travel",
-    "Chaining",
-    "Loot",
-    "Friends",
-    "Stakeouts",
-    "Awards",
-    "Items",
-    "Ranked Wars",
-    "Stock Market",
-    "Wiki",
-    "Alerts",
-    "Settings",
-    "About",
-    "Tips"
-  ];
+  // Drawer section order
+  final _drawerItemsList = DrawerSection.values;
 
   final StatsController _statsController = StatsController();
 
@@ -146,15 +132,19 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
   DateTime? _deepLinkSubTriggeredTime;
   bool _deepLinkInitOnce = false;
+  bool _openingForeignStocksExternally = false;
 
   // Used to avoid racing condition with browser launch from notifications (not included in the FutureBuilder), as
   // preferences take time to load
   final Completer _preferencesCompleter = Completer();
+  // Fires as soon as local preferences are read, before the connectivity check and the
+  // profile API refresh. AuthRecoveryWidget waits on this one so it doesn't time out
+  final Completer _localPreferencesCompleter = Completer();
   // Used for the main UI loading (FutureBuilder)
   Future? _finishedWithPreferencesAndDialogs;
 
-  int _activeDrawerIndex = 0;
-  int _selected = 0;
+  DrawerSection _activeDrawerIndex = DrawerSection.profile;
+  DrawerSection _selected = DrawerSection.profile;
 
   bool _forceFireUserReload = false;
 
@@ -249,31 +239,31 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         if (shortcutType == 'open_torn') {
           await _preferencesCompleter.future;
           context.read<WebViewProvider>().openBrowserPreference(
-                context: context,
-                url: "https://www.torn.com",
-                browserTapType: BrowserTapType.quickItem,
-              );
+            context: context,
+            url: "https://www.torn.com",
+            browserTapType: BrowserTapType.quickItem,
+          );
         } else if (shortcutType == 'open_gym') {
           await _preferencesCompleter.future;
           context.read<WebViewProvider>().openBrowserPreference(
-                context: context,
-                url: "https://www.torn.com/gym.php",
-                browserTapType: BrowserTapType.quickItem,
-              );
+            context: context,
+            url: "https://www.torn.com/gym.php",
+            browserTapType: BrowserTapType.quickItem,
+          );
         } else if (shortcutType == 'open_crimes') {
           await _preferencesCompleter.future;
           context.read<WebViewProvider>().openBrowserPreference(
-                context: context,
-                url: "https://www.torn.com/crimes.php",
-                browserTapType: BrowserTapType.quickItem,
-              );
+            context: context,
+            url: "https://www.torn.com/crimes.php",
+            browserTapType: BrowserTapType.quickItem,
+          );
         } else if (shortcutType == 'open_travel') {
           await _preferencesCompleter.future;
           context.read<WebViewProvider>().openBrowserPreference(
-                context: context,
-                url: "https://www.torn.com/travelagency.php",
-                browserTapType: BrowserTapType.quickItem,
-              );
+            context: context,
+            url: "https://www.torn.com/travelagency.php",
+            browserTapType: BrowserTapType.quickItem,
+          );
         }
       });
 
@@ -307,10 +297,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
   void _initializeConfig() {
     try {
-      _allowSectionsWithoutKey = [
-        _settingsPosition,
-        _aboutPosition,
-      ];
+      _allowSectionsWithoutKey = [DrawerSection.settings, DrawerSection.about];
 
       _finishedWithPreferencesAndDialogs = _loadPreferencesAndDialogs();
     } catch (e, stackTrace) {
@@ -410,6 +397,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           } else {
             return;
           }
+        });
+
+        // Heal tokens that rotated before we listened
+        if (appHasBeenUpdated) {
+          FirestoreHelper().reconcileMessagingToken();
+        }
+        _messaging.onTokenRefresh.listen((newToken) {
+          FirestoreHelper().onMessagingTokenRefreshed(newToken);
         });
       }
     } catch (e, stackTrace) {
@@ -517,6 +512,19 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     // This ensures AuthRecoveryWidget has the correct value before it starts
     _authRecoveryEnabledRC = await Prefs().getAuthRecoveryEnabledRC();
 
+    // Register the gate before anything can complete it: AuthRecoveryWidget may finish
+    // in a few hundred ms (e.g. no API key) and its completion must not be missed
+    DialogQueue.setAuthGate(_authGateCompleter);
+
+    // Local preferences first
+    try {
+      await _loadLocalPreferences();
+    } finally {
+      if (!_localPreferencesCompleter.isCompleted) {
+        _localPreferencesCompleter.complete();
+      }
+    }
+
     // Wait for initial connectivity check to complete
     if (ConnectivityHandler.instance.connectivityCheckEnabled) {
       await _ensureConnectivity();
@@ -525,10 +533,6 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     await _loadPreferencesAsync();
 
     if (mounted) {
-      // Set up auth gate so dialogs wait for AuthRecoveryWidget to complete
-      // This prevents dialogs from appearing over loading/timeout screens
-      DialogQueue.setAuthGate(_authGateCompleter);
-
       // Start collecting dialogs for 500ms before processing
       // This ensures proper priority ordering during app startup
       DialogQueue.startCollectingDialogs();
@@ -547,9 +551,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     await ConnectivityHandler.instance.initializationFuture;
     if (!ConnectivityHandler.instance.hasConnection.value) {
       try {
-        await ConnectivityHandler.instance.waitForInternetConnection(
-          timeout: const Duration(seconds: 10),
-        );
+        await ConnectivityHandler.instance.waitForInternetConnection(timeout: const Duration(seconds: 10));
       } catch (e) {
         log(name: "CONNECTIVITY DRAWER", 'Connectivity time out or errored, continuing...');
       }
@@ -573,7 +575,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       await reconfigureNotificationChannels(mod: vibration);
     }
 
-    await _loadInitPreferences();
+    await _loadStartupNetworkTasks();
 
     if (!_preferencesCompleter.isCompleted) {
       _preferencesCompleter.complete();
@@ -721,6 +723,15 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         "use_browser_cache": "user", // user, on, off
         "dynamic_appIcon_enabled": "false",
         "browser_center_editing_text_field_allowed": true,
+        "browser_extend_height_for_keyboard_allowed": true,
+        "browser_restore_webview_focus_allowed": true,
+        "browser_engine_prewarm_allowed": true,
+        "browser_webview_recovery_allowed": true,
+        "browser_render_process_gone_allowed": true,
+        "browser_park_background_tabs_allowed": true,
+        // Default for the browser memory settings (can be overriden)
+        "browser_park_background_tabs_default": false,
+        "browser_tab_sleep_minutes_default": 720,
         "auth_recovery_enabled": true,
         // Revives
         "revive_wolverines": "1 million or 1 Xanax",
@@ -729,12 +740,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         "revive_nuke": "1.8 million or 2 Xanax",
         "revive_uhc": "1.8 million or 2 Xanax",
         "revive_wtf": "1.8 million or 2 Xanax",
+        "revive_combat_ready": "1.5 million or 2 Xanax",
+        "revive_asclepius": "\$1M",
         // Torn API
         "apiV2LegacyRequests": "",
         // PDA Update Details
         "pda_update_details": "",
         // Connectivity check
-        "pda_connectivity_check": false
+        "pda_connectivity_check": false,
       });
 
       // Wait for preferences to be loaded before fetching Remote Config
@@ -790,20 +803,38 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       _webViewProvider.webviewDialogRecoveryEnabledIOS = remoteConfig.getBool("webview_dialog_recovery_enabled_ios");
       _settingsProvider.webviewCacheEnabledRemoteConfig = remoteConfig.getString("use_browser_cache");
       _settingsProvider.dynamicAppIconEnabledRemoteConfig = remoteConfig.getBool("dynamic_appIcon_enabled");
-      _settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed =
-          remoteConfig.getBool("browser_center_editing_text_field_allowed");
-      _settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed =
-          remoteConfig.getBool("browser_extend_height_for_keyboard_allowed");
+      _settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_center_editing_text_field_allowed",
+      );
+      _settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_extend_height_for_keyboard_allowed",
+      );
+      _settingsProvider.browserRestoreWebViewFocusRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_restore_webview_focus_allowed",
+      );
+      _settingsProvider.browserEnginePrewarmRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_engine_prewarm_allowed",
+      );
+      _settingsProvider.browserWebViewRecoveryRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_webview_recovery_allowed",
+      );
+      _settingsProvider.browserRenderProcessGoneRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_render_process_gone_allowed",
+      );
+      _webViewProvider.parkBackgroundTabsRemoteConfigAllowed = remoteConfig.getBool(
+        "browser_park_background_tabs_allowed",
+      );
+
+      // Browser memory defaults (also persisted, so they are known before the fetch on next launch)
+      _webViewProvider.parkBackgroundTabsDefaultRC = remoteConfig.getBool("browser_park_background_tabs_default");
+      final int tabSleepMinutesRC = remoteConfig.getInt("browser_tab_sleep_minutes_default");
+      if (tabSleepMinutesRC > 0) {
+        _webViewProvider.tabSleepMinutesDefaultRC = tabSleepMinutesRC;
+      }
 
       // Auth recovery (also persist to SharedPrefs for next app launch)
       _authRecoveryEnabledRC = remoteConfig.getBool("auth_recovery_enabled");
       Prefs().setAuthRecoveryEnabledRC(_authRecoveryEnabledRC);
-
-      if (!_settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed &&
-          _settingsProvider.browserExtendHeightForKeyboard) {
-        // If RC disables the feature, also turn off the user toggle to avoid confusion
-        _settingsProvider.browserExtendHeightForKeyboard = false;
-      }
 
       // Revives
       _settingsProvider.reviveWolverinesPrice = remoteConfig.getString("revive_wolverines");
@@ -812,6 +843,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       _settingsProvider.reviveNukePrice = remoteConfig.getString("revive_nuke");
       _settingsProvider.reviveUhcPrice = remoteConfig.getString("revive_uhc");
       _settingsProvider.reviveWtfPrice = remoteConfig.getString("revive_wtf");
+      _settingsProvider.reviveCombatReadyPrice = remoteConfig.getString("revive_combat_ready");
+      _settingsProvider.reviveAsclepiusPrice = remoteConfig.getString("revive_asclepius");
 
       // Sendbird
       final sb = Get.find<SendbirdController>();
@@ -826,6 +859,15 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
       // Connectivity check
       Prefs().setPdaConnectivityCheck(remoteConfig.getBool("pda_connectivity_check"));
+
+      // JS Snippets RC overrides: snippet_<id>_js (raw JS) + snippet_<id>_version
+      for (final id in RemoteSnippets.ids) {
+        RemoteSnippets.setOverride(
+          id,
+          remoteConfig.getString('snippet_${id}_version'),
+          remoteConfig.getString('snippet_${id}_js'),
+        );
+      }
     } catch (e) {
       log('Error updating Remote Config values: $e');
     }
@@ -852,19 +894,20 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       // Note: orientation here is taken BEFORE the change
       SystemChrome.setSystemUIOverlayStyle(
         SystemUiOverlayStyle(
-            statusBarColor: _themeProvider!.statusBar,
-            systemNavigationBarColor: _themeProvider!.statusBar,
-            systemNavigationBarIconBrightness: Brightness.light,
-            statusBarIconBrightness: Brightness.light,
+          statusBarColor: _themeProvider!.statusBar,
+          systemNavigationBarColor: _themeProvider!.statusBar,
+          systemNavigationBarIconBrightness: Brightness.light,
+          statusBarIconBrightness: Brightness.light,
 
-            // iOS
-            statusBarBrightness: _webViewProvider.browserShowInForeground
-                ? Brightness.dark
-                : MediaQuery.orientationOf(context) == Orientation.landscape
-                    ? _themeProvider!.currentTheme == AppTheme.light
-                        ? Brightness.light
-                        : Brightness.dark
-                    : Brightness.dark),
+          // iOS
+          statusBarBrightness: _webViewProvider.browserShowInForeground
+              ? Brightness.dark
+              : MediaQuery.orientationOf(context) == Orientation.landscape
+              ? _themeProvider!.currentTheme == AppTheme.light
+                    ? Brightness.light
+                    : Brightness.dark
+              : Brightness.dark,
+        ),
       );
     });
   }
@@ -882,6 +925,9 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     }
 
     if (state == AppLifecycleState.paused) {
+      // Park background tabs while we are still allowed to run (Android)
+      _webViewProvider.onAppBackgrounded();
+
       // Stop stakeouts
       _s.stopTimer();
       log("Stakeouts stopped");
@@ -1009,7 +1055,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       launchBrowser = true;
       browserUrl = "https://www.torn.com/page.php?sid=racing";
     } else if (intent.data!.contains("pdaWidget://chain:box:clicked")) {
-      _callSectionFromOutside(2); // Chaining
+      _callSectionFromOutside(DrawerSection.chaining); // Chaining
       return;
     } else if (intent.data!.contains("pdaWidget://empty:shortcuts:clicked")) {
       if (!_webViewProvider.webViewSplitActive) {
@@ -1017,11 +1063,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           _webViewProvider.browserShowInForeground = false;
         });
       }
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (BuildContext context) => ShortcutsPage(),
-        ),
-      );
+      Navigator.of(context).push(MaterialPageRoute(builder: (BuildContext context) => ShortcutsPage()));
       return;
     }
 
@@ -1089,6 +1131,38 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       }
     }
 
+    if (link != null && link.startsWith("tornpda://travel/")) {
+      if (_deepLinkSubTriggeredTime != null && DateTime.now().difference(_deepLinkSubTriggeredTime!).inSeconds < 3) {
+        return;
+      }
+      _deepLinkSubTriggeredTime = DateTime.now();
+
+      try {
+        final uri = Uri.parse(link);
+        final entryPoint = uri.pathSegments.isEmpty ? "" : uri.pathSegments.first;
+        if (uri.host == "travel" && (entryPoint == "live" || entryPoint == "notification")) {
+          final action = entryPoint == "live"
+              ? _settingsProvider.travelLiveActivityTapAction
+              : _settingsProvider.travelNotificationTapAction;
+
+          if (await _handleTravelEntryAction(action: action)) {
+            return;
+          }
+
+          _preferencesCompleter.future.whenComplete(() async {
+            _webViewProvider.openBrowserPreference(
+              context: context,
+              url: "https://www.torn.com",
+              browserTapType: BrowserTapType.deeplink,
+            );
+          });
+          return;
+        }
+      } catch (e) {
+        log("Error handling travel deep link: $e");
+      }
+    }
+
     // Handle in-app settings deep links (e.g. tornpda://settings/browser?highlight=clear-cache)
     if (link != null && link.startsWith("tornpda://settings/")) {
       // Prevents double activation (same guard as browser deep links)
@@ -1109,15 +1183,13 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           }
 
           // Switch drawer to Settings
-          _callSectionFromOutside(_settingsPosition);
+          _callSectionFromOutside(DrawerSection.settings);
 
           if (pathSegments.isNotEmpty && pathSegments[0] == "browser") {
             // Push Advanced Browser Settings with highlight
             WidgetsBinding.instance.addPostFrameCallback((_) {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (BuildContext context) => SettingsBrowserPage(highlightItem: highlight),
-                ),
+                MaterialPageRoute(builder: (BuildContext context) => SettingsBrowserPage(highlightItem: highlight)),
               );
             });
           }
@@ -1147,10 +1219,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       if (showError) {
         BotToast.showText(
           text: "Incorrect deep link!\n\n$url",
-          textStyle: const TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-          ),
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
           contentColor: Colors.orange[700]!,
           duration: const Duration(seconds: 4),
           contentPadding: const EdgeInsets.all(10),
@@ -1160,9 +1229,10 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         // Prevents double activation
         if (_deepLinkSubTriggeredTime != null && DateTime.now().difference(_deepLinkSubTriggeredTime!).inSeconds < 3) {
           logToUser(
-              "Deep link triggered return\n\n "
-              "${DateTime.now().difference(_deepLinkSubTriggeredTime!).inSeconds} seconds",
-              duration: 3);
+            "Deep link triggered return\n\n "
+            "${DateTime.now().difference(_deepLinkSubTriggeredTime!).inSeconds} seconds",
+            duration: 3,
+          );
           return;
         }
         _deepLinkSubTriggeredTime = DateTime.now();
@@ -1174,11 +1244,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
             borderColor: Colors.blue.shade800,
           );
 
-          _webViewProvider.openBrowserPreference(
-            context: context,
-            url: url,
-            browserTapType: BrowserTapType.deeplink,
-          );
+          _webViewProvider.openBrowserPreference(context: context, url: url, browserTapType: BrowserTapType.deeplink);
         });
       }
     } catch (e) {
@@ -1203,7 +1269,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
           for (final not in activeNotifications) {
             if (not.id == null) continue;
-            if (not.channelId == 'travel_live_updates') continue;
+            if (not.channelId == 'live_updates_travel' || not.channelId == 'live_updates_racing') continue;
             // Platform channel to cancel direct Firebase notifications (we can call
             // "cancelAll()" there without affecting scheduled notifications, which is
             // a problem with the local plugin)
@@ -1246,6 +1312,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     bool travel = false;
     bool hospital = false;
     bool restocks = false;
+    bool abroadStay = false;
     bool racing = false;
     bool messages = false;
     bool events = false;
@@ -1286,6 +1353,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
     if (channel!.contains("Alerts travel")) {
       travel = true;
+    } else if (channel.contains("Alerts abroad stay")) {
+      abroadStay = true;
     } else if (channel.contains("Alerts hospital")) {
       hospital = true;
     } else if (channel.contains("Alerts restocks")) {
@@ -1327,6 +1396,9 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     }
 
     if (travel) {
+      if (await _handleTravelEntryAction(action: _settingsProvider.travelNotificationTapAction)) {
+        return;
+      }
       launchBrowserWithUrl = true;
       browserUrl = "https://www.torn.com";
     } else if (hospital) {
@@ -1335,14 +1407,18 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     } else if (restocks) {
       launchBrowserWithUrl = true;
       browserUrl = "https://www.torn.com/travelagency.php";
+    } else if (abroadStay) {
+      launchBrowserWithUrl = true;
+      browserUrl = "https://www.torn.com";
     } else if (racing) {
       launchBrowserWithUrl = true;
-      browserUrl = "https://www.torn.com/loader.php?sid=racing";
+      browserUrl = "https://www.torn.com/page.php?sid=racing";
     } else if (messages) {
       launchBrowserWithUrl = true;
       browserUrl = "https://www.torn.com/messages.php";
       if (messageId != "") {
-        browserUrl = "https://www.torn.com/messages.php#/p=read&ID="
+        browserUrl =
+            "https://www.torn.com/messages.php#/p=read&ID="
             "$messageId&suffix=inbox";
       }
     } else if (events) {
@@ -1352,7 +1428,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       launchBrowserWithUrl = true;
       browserUrl = "https://www.torn.com/trade.php";
       if (tradeId != "") {
-        browserUrl = "https://www.torn.com/trade.php#step=view&ID="
+        browserUrl =
+            "https://www.torn.com/trade.php#step=view&ID="
             "$tradeId";
       }
     } else if (nerve) {
@@ -1411,18 +1488,18 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       if (!_settingsProvider.retaliationSectionEnabled ||
           (int.parse(bulkDetails) == 1 && _settingsProvider.singleRetaliationOpensBrowser)) {
         launchBrowserWithUrl = true;
-        browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+        browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
       } else {
         // Even if we meet above requirements, call the API and assess whether the user
         // as API permits (if he does not, open the browser anyway as he can't use the retals section)
         final attacksResult = await ApiCallsV1.getFactionAttacks();
         if (attacksResult is! FactionAttacksModel) {
           launchBrowserWithUrl = true;
-          browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+          browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
         } else {
           // If we pass all checks above, redirect to the retals section
           _retalsRedirection = true;
-          _callSectionFromOutside(2);
+          _callSectionFromOutside(DrawerSection.chaining);
           Future.delayed(const Duration(seconds: 2)).then((_) {
             if (mounted) {
               _retalsRedirection = false;
@@ -1434,7 +1511,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       // Not implemented (there is a box showing in _getBackGroundNotifications)
     } else if (assists) {
       launchBrowserWithUrl = true;
-      browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+      browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
 
       Color? totalColor = Colors.grey[700];
       try {
@@ -1513,17 +1590,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         }
       } catch (e) {
         // Leave as it was
-        print(e);
+        debugPrint('Drawer notification parse error: $e');
       }
 
       BotToast.showText(
         align: const Alignment(0, 0),
         clickClose: true,
         text: message["body"],
-        textStyle: const TextStyle(
-          fontSize: 14,
-          color: Colors.white,
-        ),
+        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
         contentColor: totalColor!,
         duration: const Duration(seconds: 10),
         contentPadding: const EdgeInsets.all(10),
@@ -1533,7 +1607,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       if (incomingIds.length == 1 && !incomingIds[0].contains("[")) {
         // This is a standard loot alert for a single NPC
         launchBrowserWithUrl = true;
-        browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+        browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
       } else if (incomingIds[0].contains("[")) {
         // This is a Loot Rangers alert for one or more NPCs
         final ids = <String>[];
@@ -1555,7 +1629,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         // Open chaining browser for Loot Rangers
         _webViewProvider.openBrowserPreference(
           context: context,
-          url: "https://www.torn.com/loader.php?sid=attack&user2ID=${ids[0]}",
+          url: "https://www.torn.com/page.php?sid=attack&user2ID=${ids[0]}",
           browserTapType: BrowserTapType.chainShort,
           isChainingBrowser: true,
           chainingPayload: ChainingPayload()
@@ -1621,11 +1695,17 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           }
         }
       } else if (payload == 'travel') {
+        if (await _handleTravelEntryAction(action: _settingsProvider.travelNotificationTapAction)) {
+          return;
+        }
         launchBrowserWithUrl = true;
         browserUrl = 'https://www.torn.com';
       } else if (payload == 'restocks') {
         launchBrowserWithUrl = true;
         browserUrl = 'https://www.torn.com/travelagency.php';
+      } else if (payload == 'abroadStay') {
+        launchBrowserWithUrl = true;
+        browserUrl = 'https://www.torn.com';
       } else if (payload.contains('energy')) {
         launchBrowserWithUrl = true;
         browserUrl = 'https://www.torn.com/gym.php';
@@ -1672,7 +1752,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         browserUrl = 'https://www.torn.com';
       } else if (payload.contains('racing') || payload.contains('race')) {
         launchBrowserWithUrl = true;
-        browserUrl = 'https://www.torn.com/loader.php?sid=racing';
+        browserUrl = 'https://www.torn.com/page.php?sid=racing';
       } else if (payload.contains("scriptupdate")) {
         setState(() {
           _webViewProvider.browserShowInForeground = false;
@@ -1681,16 +1761,12 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         if (_userScriptsProvider.isInSafeMode) {
           _userScriptsProvider.showSafeModeWarning();
         } else {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (BuildContext context) => const UserScriptsPage(),
-            ),
-          );
+          Navigator.of(context).push(MaterialPageRoute(builder: (BuildContext context) => const UserScriptsPage()));
         }
       } else if (payload.contains('400-')) {
         launchBrowserWithUrl = true;
         final npcId = payload.split('-')[1];
-        browserUrl = 'https://www.torn.com/loader.php?sid=attack&user2ID=$npcId';
+        browserUrl = 'https://www.torn.com/page.php?sid=attack&user2ID=$npcId';
       } else if (payload.contains('499-')) {
         // Loot Rangers payload is (split by -)
         // [0] 499
@@ -1717,7 +1793,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         // Open chaining browser for Loot Rangers
         _webViewProvider.openBrowserPreference(
           context: context,
-          url: "https://www.torn.com/loader.php?sid=attack&user2ID=${lootRangersNpcsIds[0]}",
+          url: "https://www.torn.com/page.php?sid=attack&user2ID=${lootRangersNpcsIds[0]}",
           browserTapType: BrowserTapType.chainShort,
           isChainingBrowser: true,
           chainingPayload: ChainingPayload()
@@ -1730,13 +1806,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
             ..showOnlineFactionWarning = false,
         );
 
-        browserUrl = 'https://www.torn.com/loader.php?sid=attack&user2ID=$lootRangersNpcsIds';
+        browserUrl = 'https://www.torn.com/page.php?sid=attack&user2ID=$lootRangersNpcsIds';
       } else if (payload.contains('tornMessageId:')) {
         launchBrowserWithUrl = true;
         final messageId = payload.split(':');
         browserUrl = "https://www.torn.com/messages.php";
         if (messageId[1] != "0") {
-          browserUrl = "https://www.torn.com/messages.php#/p=read&ID="
+          browserUrl =
+              "https://www.torn.com/messages.php#/p=read&ID="
               "${messageId[1]}&suffix=inbox";
         }
       } else if (payload.contains('events')) {
@@ -1771,18 +1848,18 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         if (!_settingsProvider.retaliationSectionEnabled ||
             (int.parse(bulkDetails) == 1 && _settingsProvider.singleRetaliationOpensBrowser)) {
           launchBrowserWithUrl = true;
-          browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+          browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
         } else {
           // Even if we meet above requirements, call the API and assess whether the user
           // as API permits (if he does not, open the browser anyway as he can't use the retals section)
           final attacksResult = await ApiCallsV1.getFactionAttacks();
           if (attacksResult is! FactionAttacksModel) {
             launchBrowserWithUrl = true;
-            browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+            browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
           } else {
             // If we pass all checks above, redirect to the retals section
             _retalsRedirection = true;
-            _callSectionFromOutside(2);
+            _callSectionFromOutside(DrawerSection.chaining);
             Future.delayed(const Duration(seconds: 2)).then((value) {
               _retalsRedirection = false;
             });
@@ -1796,7 +1873,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         final assistId = assistSplit[0].split(':');
         final assistBody = assistSplit[1].split('assistDetails:');
         final bulkDetails = assistSplit[2].split('bulkDetails:');
-        browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=${assistId[1]}";
+        browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=${assistId[1]}";
 
         Color? totalColor = Colors.grey[700];
         try {
@@ -1870,10 +1947,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           align: const Alignment(0, 0),
           clickClose: true,
           text: assistBody[1],
-          textStyle: const TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-          ),
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
           contentColor: totalColor!,
           duration: const Duration(seconds: 10),
           contentPadding: const EdgeInsets.all(10),
@@ -1886,7 +1960,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         if (incomingIds.length == 1 && !incomingIds[0].contains("[")) {
           // This is a standard loot alert for a single NPC
           launchBrowserWithUrl = true;
-          browserUrl = "https://www.torn.com/loader.php?sid=attack&user2ID=$assistId";
+          browserUrl = "https://www.torn.com/page.php?sid=attack&user2ID=$assistId";
         } else if (incomingIds[0].contains("[")) {
           // This is a Loot Rangers alert for one or more NPCs
           final ids = <String>[];
@@ -1908,7 +1982,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           // Open chaining browser for Loot Rangers
           _webViewProvider.openBrowserPreference(
             context: context,
-            url: "https://www.torn.com/loader.php?sid=attack&user2ID=${ids[0]}",
+            url: "https://www.torn.com/page.php?sid=attack&user2ID=${ids[0]}",
             browserTapType: BrowserTapType.chainShort,
             isChainingBrowser: true,
             chainingPayload: ChainingPayload()
@@ -1971,7 +2045,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
     _s.callbackBrowser = _openBrowserFromToast;
     return AuthRecoveryWidget(
-      preferencesCompleter: _preferencesCompleter,
+      preferencesCompleter: _localPreferencesCompleter,
       appHasBeenUpdated: appHasBeenUpdated,
       enabled: _authRecoveryEnabledRC,
       onAuthCompleted: () => DialogQueue.completeAuthGate(),
@@ -1984,10 +2058,10 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
             return Container(
               color: _themeProvider!.currentTheme == AppTheme.light
                   ? MediaQuery.orientationOf(context) == Orientation.portrait
-                      ? Colors.blueGrey
-                      : isStatusBarShown
-                          ? _themeProvider!.statusBar
-                          : _themeProvider!.canvas
+                        ? Colors.blueGrey
+                        : isStatusBarShown
+                        ? _themeProvider!.statusBar
+                        : _themeProvider!.canvas
                   : _themeProvider!.canvas,
               child: SafeArea(
                 child: Scaffold(
@@ -2011,20 +2085,23 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           return Container(
             color: _themeProvider!.currentTheme == AppTheme.light
                 ? MediaQuery.orientationOf(context) == Orientation.portrait
-                    ? Colors.blueGrey
-                    : isStatusBarShown
-                        ? _themeProvider!.statusBar
-                        : _themeProvider!.canvas
+                      ? Colors.blueGrey
+                      : isStatusBarShown
+                      ? _themeProvider!.statusBar
+                      : _themeProvider!.canvas
                 : _themeProvider!.statusBar,
             child: SafeArea(
-              right: _webViewProvider.webViewSplitActive &&
+              right:
+                  _webViewProvider.webViewSplitActive &&
                   _webViewProvider.splitScreenPosition == WebViewSplitPosition.left,
-              left: _webViewProvider.webViewSplitActive &&
+              left:
+                  _webViewProvider.webViewSplitActive &&
                   _webViewProvider.splitScreenPosition == WebViewSplitPosition.right,
               child: Scaffold(
                 key: _scaffoldKey,
                 body: _getPages(),
-                endDrawer: _webViewProvider.webViewSplitActive &&
+                endDrawer:
+                    _webViewProvider.webViewSplitActive &&
                         _webViewProvider.splitScreenPosition == WebViewSplitPosition.left
                     ? Drawer(
                         backgroundColor: _themeProvider!.canvas,
@@ -2034,14 +2111,17 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                           padding: EdgeInsets.zero,
                           children: <Widget>[
                             _getDrawerHeader(),
-                            Consumer<SettingsProvider>(builder: (context, settingsProvider, child) {
-                              return _getDrawerItems(settingsProvider);
-                            }),
+                            Consumer<SettingsProvider>(
+                              builder: (context, settingsProvider, child) {
+                                return _getDrawerItems(settingsProvider);
+                              },
+                            ),
                           ],
                         ),
                       )
                     : null,
-                drawer: _webViewProvider.webViewSplitActive &&
+                drawer:
+                    _webViewProvider.webViewSplitActive &&
                         _webViewProvider.splitScreenPosition == WebViewSplitPosition.left
                     ? null
                     : Drawer(
@@ -2052,9 +2132,11 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                           padding: EdgeInsets.zero,
                           children: <Widget>[
                             _getDrawerHeader(),
-                            Consumer<SettingsProvider>(builder: (context, settingsProvider, child) {
-                              return _getDrawerItems(settingsProvider);
-                            }),
+                            Consumer<SettingsProvider>(
+                              builder: (context, settingsProvider, child) {
+                                return _getDrawerItems(settingsProvider);
+                              },
+                            ),
                           ],
                         ),
                       ),
@@ -2076,92 +2158,74 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: <Widget>[
-            Obx(
-              () {
-                if (_apiController.showApiRateInDrawer.isTrue) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        StreamBuilder<int>(
-                          stream: _apiController.callCountStream,
-                          initialData: 0,
-                          builder: (BuildContext context, AsyncSnapshot<int> snapshot) {
-                            final int callCount = snapshot.data ?? 0;
-                            final double progress = math.min(callCount / 100, 1.0);
-                            return LinearPercentIndicator(
-                              padding: const EdgeInsets.all(0),
-                              barRadius: const Radius.circular(10),
-                              center: Text(
-                                "$callCount",
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                              lineHeight: 14.0,
-                              percent: progress,
-                              backgroundColor:
-                                  _themeProvider!.currentTheme == AppTheme.light ? Colors.grey[400] : Colors.grey[800],
-                              progressColor: callCount >= 95 ? Colors.red[400] : Colors.green,
-                            );
-                          },
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.only(left: 4, top: 1),
-                              child: Text(
-                                "API CALLS (60s)",
-                                style: TextStyle(fontSize: 9),
-                              ),
+            Obx(() {
+              if (_apiController.showApiRateInDrawer.isTrue) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      StreamBuilder<int>(
+                        stream: _apiController.callCountStream,
+                        initialData: 0,
+                        builder: (BuildContext context, AsyncSnapshot<int> snapshot) {
+                          final int callCount = snapshot.data ?? 0;
+                          final double progress = math.min(callCount / 100, 1.0);
+                          return LinearPercentIndicator(
+                            padding: const EdgeInsets.all(0),
+                            barRadius: const Radius.circular(10),
+                            center: Text("$callCount", style: const TextStyle(fontSize: 12)),
+                            lineHeight: 14.0,
+                            percent: progress,
+                            backgroundColor: _themeProvider!.currentTheme == AppTheme.light
+                                ? Colors.grey[400]
+                                : Colors.grey[800],
+                            progressColor: callCount >= 95 ? Colors.red[400] : Colors.green,
+                          );
+                        },
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4, top: 1),
+                            child: Text("API CALLS (60s)", style: TextStyle(fontSize: 9)),
+                          ),
+                          if (_apiController.delayCalls)
+                            StreamBuilder<Map<String, dynamic>>(
+                              stream: _apiController.queueStatsStream,
+                              initialData: {'queueLength': 0, 'avgTime': 0},
+                              builder: (BuildContext context, AsyncSnapshot<Map<String, dynamic>> snapshot) {
+                                final int queueLength = snapshot.data?['queueLength'] ?? 0;
+                                final double avgTime = snapshot.data?['avgTime'].toDouble() ?? 0;
+                                return Text(
+                                  "QUEUE: $queueLength${queueLength > 0 ? ' (delay ${avgTime.ceil()} sec)' : ''}",
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color: queueLength == 0 ? _themeProvider!.mainText : Colors.red,
+                                    fontWeight: queueLength == 0 ? FontWeight.normal : FontWeight.bold,
+                                  ),
+                                );
+                              },
                             ),
-                            if (_apiController.delayCalls)
-                              StreamBuilder<Map<String, dynamic>>(
-                                stream: _apiController.queueStatsStream,
-                                initialData: {'queueLength': 0, 'avgTime': 0},
-                                builder: (BuildContext context, AsyncSnapshot<Map<String, dynamic>> snapshot) {
-                                  final int queueLength = snapshot.data?['queueLength'] ?? 0;
-                                  final double avgTime = snapshot.data?['avgTime'].toDouble() ?? 0;
-                                  return Text(
-                                    "QUEUE: $queueLength${queueLength > 0 ? ' (delay ${avgTime.ceil()} sec)' : ''}",
-                                    style: TextStyle(
-                                        fontSize: 9,
-                                        color: queueLength == 0 ? _themeProvider!.mainText : Colors.red,
-                                        fontWeight: queueLength == 0 ? FontWeight.normal : FontWeight.bold),
-                                  );
-                                },
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                } else {
-                  return const SizedBox.shrink();
-                }
-              },
-            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                return const SizedBox.shrink();
+              }
+            }),
             showMemory
-                ? const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: MemoryBarWidgetDrawer(),
-                  )
+                ? const Padding(padding: EdgeInsets.all(8.0), child: MemoryBarWidgetDrawer())
                 : const SizedBox.shrink(),
             const Flexible(
-              child: Image(
-                image: AssetImage('images/icons/torn_pda.png'),
-                fit: BoxFit.fill,
-              ),
+              child: Image(image: AssetImage('images/icons/torn_pda.png'), fit: BoxFit.fill),
             ),
             const Padding(
               padding: EdgeInsets.only(top: 8.0),
-              child: Text(
-                'TORN PDA',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              child: Text('TORN PDA', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
             Padding(
               padding: const EdgeInsets.only(top: 20),
@@ -2177,33 +2241,30 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                           iconSize: 15,
                           borderWidth: 1,
                           cornerRadius: 5,
-                          borderColor:
-                              _themeProvider!.currentTheme == AppTheme.light ? [Colors.blueGrey] : [Colors.grey[900]!],
+                          borderColor: _themeProvider!.currentTheme == AppTheme.light
+                              ? [Colors.blueGrey]
+                              : [Colors.grey[900]!],
                           initialLabelIndex: _themeProvider!.currentTheme == AppTheme.light
                               ? 0
                               : _themeProvider!.currentTheme == AppTheme.dark
-                                  ? 1
-                                  : 2,
+                              ? 1
+                              : 2,
                           activeBgColor: _themeProvider!.currentTheme == AppTheme.light
                               ? [Colors.blueGrey]
                               : _themeProvider!.currentTheme == AppTheme.dark
-                                  ? [Colors.blueGrey]
-                                  : [Colors.blueGrey[900]!],
+                              ? [Colors.blueGrey]
+                              : [Colors.blueGrey[900]!],
                           activeFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
                           inactiveBgColor: _themeProvider!.currentTheme == AppTheme.light
                               ? Colors.white
                               : _themeProvider!.currentTheme == AppTheme.dark
-                                  ? Colors.grey[800]
-                                  : Colors.black,
+                              ? Colors.grey[800]
+                              : Colors.black,
                           inactiveFgColor: _themeProvider!.currentTheme == AppTheme.light ? Colors.black : Colors.white,
                           totalSwitches: 3,
                           animate: true,
                           animationDuration: 500,
-                          icons: [
-                            FontAwesome.sun_o,
-                            FontAwesome.moon_o,
-                            MdiIcons.ghost,
-                          ],
+                          icons: [FontAwesome.sun_o, FontAwesome.moon_o, MdiIcons.ghost],
                           onToggle: (index) {
                             bool syncToast = false;
                             if (_settingsProvider.syncDeviceTheme) {
@@ -2214,12 +2275,10 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                                 syncToast = true;
                                 BotToast.showText(
                                   clickClose: true,
-                                  text: "Automatic sync with your device theme is enabled: bear in mind that your "
+                                  text:
+                                      "Automatic sync with your device theme is enabled: bear in mind that your "
                                       "current theme selection might be reverted!",
-                                  textStyle: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.white,
-                                  ),
+                                  textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                                   contentColor: Colors.orange[800]!,
                                   duration: const Duration(seconds: 6),
                                   contentPadding: const EdgeInsets.all(10),
@@ -2245,10 +2304,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                               if (!syncToast) {
                                 BotToast.showText(
                                   text: "Spooky...!",
-                                  textStyle: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
+                                  textStyle: const TextStyle(fontSize: 14, color: Colors.grey),
                                   contentColor: const Color(0xFF0C0C0C),
                                   contentPadding: const EdgeInsets.all(10),
                                 );
@@ -2295,187 +2351,143 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     );
   }
 
-  Widget _getDrawerItems(SettingsProvider settingsProvider) {
-    final drawerOptions = <Widget>[];
-    // If API key is not valid, we just show the Settings + About pages
-    // (just don't add the other sections to the list)
+  List<DrawerSection> _getVisibleSections(SettingsProvider settingsProvider) {
     if (!UserHelper.isApiKeyValid) {
-      for (final position in _allowSectionsWithoutKey) {
-        drawerOptions.add(
-          ListTileTheme(
-            selectedColor: Colors.red,
-            iconColor: _themeProvider!.mainText,
-            child: Ink(
-              color: position == _selected ? Colors.grey[300] : Colors.transparent,
-              child: ListTile(
-                leading: _returnDrawerIcons(drawerPosition: position),
-                title: Text(
-                  _drawerItemsList[position],
-                  style: TextStyle(
-                    fontWeight: position == _selected ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-                selected: position == _selected,
-                onTap: () => _onSelectItem(position),
-              ),
-            ),
-          ),
-        );
-      }
-    } else {
-      // Otherwise, if the key is valid, we loop all the sections
-      for (var i = 0; i < _drawerItemsList.length; i++) {
-        // For this two, it is necessary to call Settings Provider from the Drawer and pass the callbacks all the
-        // way to the relevant children. Otherwise, the drawer won't update in realtime (it's not listening)
-        if (settingsProvider.disableTravelSection && _drawerItemsList[i] == "Travel") {
-          continue;
-        }
+      return _allowSectionsWithoutKey;
+    }
 
-        if (!settingsProvider.rankedWarsInMenu && _drawerItemsList[i] == "Ranked Wars") {
-          continue;
-        }
+    final order = settingsProvider.drawerSectionOrder;
+    final sectionsToIterate = order.isNotEmpty
+        ? order.map((id) => DrawerSection.fromId(id)).whereType<DrawerSection>().toList()
+        : _drawerItemsList.toList();
 
-        if (_drawerItemsList[i] == "Wiki") {
-          if (settingsProvider.showWikiInDrawer) {
-            drawerOptions.add(WikiMenu(themeProvider: _themeProvider!));
-          } else {
-            drawerOptions.add(const SizedBox.shrink());
-          }
-
-          continue;
-        }
-
-        if (!Platform.isWindows) {
-          if (!settingsProvider.stockExchangeInMenu && _drawerItemsList[i] == "Stock Market") {
-            continue;
-          }
-        }
-
-        // Adding divider just before SETTINGS
-        if (i == _settingsPosition) {
-          drawerOptions.add(
-            const Divider(),
-          );
-        }
-        drawerOptions.add(
-          ListTileTheme(
-            selectedColor: Colors.red,
-            iconColor: _themeProvider!.mainText,
-            child: Ink(
-              color: i == _selected ? Colors.grey[300] : Colors.transparent,
-              child: ListTile(
-                leading: _returnDrawerIcons(drawerPosition: i),
-                title: Text(
-                  _drawerItemsList[i],
-                  style: TextStyle(
-                    fontWeight: i == _selected ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-                selected: i == _selected,
-                onTap: () => _onSelectItem(i),
-              ),
-            ),
-          ),
-        );
+    // Ensure any new sections not in the saved order are still shown
+    for (final section in _drawerItemsList) {
+      if (!sectionsToIterate.contains(section)) {
+        sectionsToIterate.add(section);
       }
     }
+
+    final visible = <DrawerSection>[];
+    for (final section in sectionsToIterate) {
+      // Existing feature toggles
+      if (settingsProvider.disableTravelSection && section == DrawerSection.travel) {
+        continue;
+      }
+      if (!settingsProvider.rankedWarsInMenu && section == DrawerSection.rankedWars) {
+        continue;
+      }
+      if (!Platform.isWindows) {
+        if (!settingsProvider.stockExchangeInMenu && section == DrawerSection.stockMarket) {
+          continue;
+        }
+      }
+      if (!settingsProvider.showWikiInDrawer && section == DrawerSection.wiki) {
+        continue;
+      }
+
+      // New user-defined visibility
+      if (settingsProvider.drawerSectionHidden.contains(section.name)) {
+        continue;
+      }
+
+      visible.add(section);
+    }
+
+    return visible;
+  }
+
+  Widget _getDrawerItems(SettingsProvider settingsProvider) {
+    final drawerOptions = <Widget>[];
+    final visibleSections = _getVisibleSections(settingsProvider);
+
+    for (final section in visibleSections) {
+      if (section.isDivider) {
+        drawerOptions.add(const Divider());
+        continue;
+      }
+
+      if (section == DrawerSection.wiki) {
+        drawerOptions.add(WikiMenu(themeProvider: _themeProvider!));
+        continue;
+      }
+
+      drawerOptions.add(
+        ListTileTheme(
+          selectedColor: Colors.red,
+          iconColor: _themeProvider!.mainText,
+          child: Ink(
+            color: section == _selected ? Colors.grey[300] : Colors.transparent,
+            child: ListTile(
+              leading: Icon(section.icon),
+              title: Text(
+                section.title,
+                style: TextStyle(fontWeight: section == _selected ? FontWeight.bold : FontWeight.normal),
+              ),
+              selected: section == _selected,
+              onTap: () => _onSelectItem(section),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Column(children: drawerOptions);
   }
 
   Widget _getPages() {
     switch (_activeDrawerIndex) {
-      case 0:
+      case DrawerSection.profile:
         return ProfilePage(
           callBackSection: _callSectionFromOutside,
           disableTravelSection: _onChangeDisableTravelSection,
         );
-      case 1:
+      case DrawerSection.travel:
         return const TravelPage();
-      case 2:
+      case DrawerSection.chaining:
         return ChainingPage(retalsRedirection: _retalsRedirection);
-      case 3:
+      case DrawerSection.loot:
         return LootPage();
-      case 4:
+      case DrawerSection.friends:
         return FriendsPage();
-      case 5:
+      case DrawerSection.stakeouts:
         return const StakeoutsPage();
-      case 6:
+      case DrawerSection.awards:
         return AwardsPage();
-      case 7:
+      case DrawerSection.items:
         return const ItemsPage();
-      case 8:
+      case DrawerSection.rankedWars:
         return const RankedWarsPage(calledFromMenu: true);
-      case 9:
+      case DrawerSection.stockMarket:
         return StockMarketAlertsPage(calledFromMenu: true, stockMarketInMenuCallback: _onChangeStockMarketInMenu);
-      case 10:
-        return Column(
-          children: [
-            WikiMenu(themeProvider: _themeProvider!),
-          ],
-        );
-      case 11:
+      case DrawerSection.wiki:
+        return Column(children: [WikiMenu(themeProvider: _themeProvider!)]);
+      case DrawerSection.alerts:
         if (Platform.isWindows) return AlertsSettingsWindows();
         return AlertsSettings(_onChangeStockMarketInMenu);
-      case 12:
-        return SettingsPage(
-          changeUID: changeUID,
-          statsController: _statsController,
-        );
-      case 13:
+      case DrawerSection.settings:
+        return SettingsPage(changeUID: changeUID, statsController: _statsController);
+      case DrawerSection.about:
         return AboutPage(uid: _userUID);
-      case 14:
+      case DrawerSection.tips:
         return TipsPage();
-
-      default:
-        return const Text("Error");
-    }
-  }
-
-  Widget _returnDrawerIcons({int? drawerPosition}) {
-    switch (drawerPosition) {
-      case 0:
-        return const Icon(Icons.person);
-      case 1:
-        return const Icon(Icons.local_airport);
-      case 2:
-        return const Icon(MdiIcons.linkVariant);
-      case 3:
-        return const Icon(MdiIcons.knifeMilitary);
-      case 4:
-        return const Icon(Icons.people);
-      case 5:
-        return const Icon(MdiIcons.cctv);
-      case 6:
-        return const Icon(MdiIcons.trophy);
-      case 7:
-        return const Icon(MdiIcons.packageVariantClosed);
-      case 8:
-        return const Icon(MaterialCommunityIcons.sword_cross);
-      case 9:
-        return const Icon(MdiIcons.bankTransfer);
-      // Case 10 is Wiki, which is a widget with its own icon
-      case 11:
-        return const Icon(Icons.notifications_active);
-      case 12:
-        return const Icon(Icons.settings);
-      case 13:
-        return const Icon(Icons.info_outline);
-      case 14:
-        return const Icon(Icons.question_answer_outlined);
-      default:
+      case DrawerSection.divider1:
+      case DrawerSection.divider2:
         return const SizedBox.shrink();
     }
   }
 
-  Future<void> _onSelectItem(int index) async {
+  Future<void> _onSelectItem(DrawerSection section) async {
     Navigator.of(context).pop();
     setState(() {
-      _selected = index;
-      _activeDrawerIndex = index;
+      _selected = section;
+      _activeDrawerIndex = section;
     });
   }
 
-  Future _loadInitPreferences() async {
+  /// Local storage only. Must stay free of network calls, as [_localPreferencesCompleter]
+  /// completes right after this and AuthRecoveryWidget is waiting on it
+  Future _loadLocalPreferences() async {
     // Set up SettingsProvider so that user preferences are applied
     // ## Leave this first as other options below need this to be initialized ##
     await _settingsProvider.loadPreferences();
@@ -2491,40 +2503,37 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
     // Set up UserController. If key is empty, redirect to the Settings page.
     // Else, open the default
+    // (the API refresh runs later, in [_loadStartupNetworkTasks])
     final userController = Get.find<UserController>();
     try {
-      await userController.loadPreferences();
+      await userController.loadPreferences(refreshFromApi: false);
     } catch (e) {
       // UserController handles its own initialization
     }
 
     // If key is empty, redirect to the Settings page.
     if (!userController.isApiKeyValid) {
-      _selected = _settingsPosition;
-      _activeDrawerIndex = _settingsPosition;
+      _selected = DrawerSection.settings;
+      _activeDrawerIndex = DrawerSection.settings;
     } else {
       String defaultSection = await Prefs().getDefaultSection();
 
       // If user wants to load the browser, change the default section to Profile
       if (defaultSection == "browser" || defaultSection == "browser_full") {
-        defaultSection = "0"; // Cambiar a Profile como base
+        defaultSection = DrawerSection.profile.name;
       }
 
-      _selected = int.parse(defaultSection);
-      _activeDrawerIndex = int.parse(defaultSection);
-
-      await _initializeAndHandleFirebaseAuth();
-
-      // Update last used time in Firebase when the app opens (we'll do the same in onResumed,
-      // since some people might leave the app opened for weeks in the background)
-      // Completer to ensure that we have a valid UID and avoid any race condition!!
-      if (!Platform.isWindows) {
-        FirestoreHelper().uidCompleter.future.whenComplete(() {
-          _updateLastActiveTime();
-        });
+      // Migrate old numeric indices (0-14) to symbolic names
+      DrawerSection resolvedSection = DrawerSection.profile;
+      final numericTry = int.tryParse(defaultSection);
+      if (numericTry != null) {
+        resolvedSection = DrawerSection.fromIndex(numericTry);
+      } else {
+        resolvedSection = DrawerSection.fromId(defaultSection) ?? DrawerSection.profile;
       }
 
-      checkForScriptUpdates();
+      _selected = resolvedSection;
+      _activeDrawerIndex = resolvedSection;
     }
 
     // Change device preferences
@@ -2537,10 +2546,36 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         DeviceOrientation.landscapeRight,
       ]);
     } else {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-      ]);
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     }
+  }
+
+  /// Startup work that hits the network. Runs after the connectivity check, so that a cold
+  /// start without internet doesn't fire the profile call, the anonymous sign-in and the
+  /// script update check into a dead connection
+  Future _loadStartupNetworkTasks() async {
+    final userController = Get.find<UserController>();
+
+    try {
+      await userController.refreshUserFromApi();
+    } catch (e) {
+      // UserController handles its own initialization
+    }
+
+    if (!userController.isApiKeyValid) return;
+
+    await _initializeAndHandleFirebaseAuth();
+
+    // Update last used time in Firebase when the app opens (we'll do the same in onResumed,
+    // since some people might leave the app opened for weeks in the background)
+    // Completer to ensure that we have a valid UID and avoid any race condition!!
+    if (!Platform.isWindows) {
+      FirestoreHelper().uidCompleter.future.whenComplete(() {
+        _updateLastActiveTime();
+      });
+    }
+
+    checkForScriptUpdates();
   }
 
   // ## Firebase Auth Quick Check ##
@@ -2582,17 +2617,11 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                   resetRestockTimestamps: true,
                 );
                 if (alertsRestored) {
-                  log(
-                    "🔒 Drawer: Alerts restored from local snapshot after import.",
-                    name: "AUTH CHECKS",
-                  );
+                  log("🔒 Drawer: Alerts restored from local snapshot after import.", name: "AUTH CHECKS");
                 }
               }
             } catch (e) {
-              log(
-                "🔒 Drawer: Failed to restore alerts from snapshot: $e",
-                name: "AUTH CHECKS",
-              );
+              log("🔒 Drawer: Failed to restore alerts from snapshot: $e", name: "AUTH CHECKS");
             }
 
             // Show dialog only if alerts could NOT be restored (no snapshot or failed)
@@ -2622,10 +2651,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
               name: "AUTH CHECKS",
             );
           } else {
-            log(
-              "🔒 Drawer: CRITICAL - signInAnon returned null after local backup import.",
-              name: "AUTH CHECKS",
-            );
+            log("🔒 Drawer: CRITICAL - signInAnon returned null after local backup import.", name: "AUTH CHECKS");
 
             await FirebaseCrashlytics.instance.recordError(
               Exception('Auth Restoration: signInAnon returned null after import'),
@@ -2635,7 +2661,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
             BotToast.showText(
               clickClose: true,
-              text: "A critical error occurred while creating your profile after the import.\n\n"
+              text:
+                  "A critical error occurred while creating your profile after the import.\n\n"
                   "Please check your internet connection, restart the app, and reload your API key in Settings.",
               textStyle: const TextStyle(fontSize: 14, color: Colors.white),
               contentColor: Colors.red,
@@ -2653,7 +2680,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
           BotToast.showText(
             clickClose: true,
-            text: "A critical error occurred while creating your profile after the import.\n\n"
+            text:
+                "A critical error occurred while creating your profile after the import.\n\n"
                 "Please check your internet connection, restart the app, and reload your API key in Settings.",
             textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.red,
@@ -2681,10 +2709,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     final User? user = FirebaseAuth.instance.currentUser;
 
     if (user != null && !_debugForceFirebaseAuthMissing) {
-      log(
-        "🔒 Drawer: Session found immediately. UID: ${user.uid}",
-        name: "AUTH CHECKS",
-      );
+      log("🔒 Drawer: Session found immediately. UID: ${user.uid}", name: "AUTH CHECKS");
       _userUID = user.uid;
       FirestoreHelper().setUID(_userUID);
       _drawerUserChecked = true;
@@ -2693,10 +2718,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
     // No immediate user >> AuthRecoveryWidget will handle the recovery flow
     // Just mark as checked so we don't run this again
-    log(
-      "🔒 Drawer: No immediate user found. AuthRecoveryWidget will handle recovery.",
-      name: "AUTH CHECKS",
-    );
+    log("🔒 Drawer: No immediate user found. AuthRecoveryWidget will handle recovery.", name: "AUTH CHECKS");
     _drawerUserChecked = true;
   }
 
@@ -2903,9 +2925,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         context: context,
         barrierDismissible: true,
         builder: (context) {
-          return BackupReminderDialog(
-            daysSinceLastBackup: daysSinceLastBackup,
-          );
+          return BackupReminderDialog(daysSinceLastBackup: daysSinceLastBackup);
         },
       );
 
@@ -2963,10 +2983,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
               context: context,
               barrierDismissible: false,
               builder: (context) {
-                return PdaUpdateDialog(
-                  updateDetails: updateDetails,
-                  themeProvider: _themeProvider,
-                );
+                return PdaUpdateDialog(updateDetails: updateDetails, themeProvider: _themeProvider);
               },
             );
 
@@ -3018,7 +3035,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
     }
   }
 
-  void _callSectionFromOutside(int section) {
+  void _callSectionFromOutside(DrawerSection section) {
     setState(() {
       if (!_webViewProvider.webViewSplitActive) {
         _webViewProvider.browserShowInForeground = false;
@@ -3028,6 +3045,55 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       _activeDrawerIndex = section;
     });
     _getPages();
+  }
+
+  Future<bool> _handleTravelEntryAction({required String action}) async {
+    if (action != "foreignStocks") return false;
+
+    final destination = await _getCurrentTravelDestination();
+    if (destination == null || destination == "Torn") return false;
+
+    await _openForeignStocksPageIfNeeded(temporaryDestinationCountry: destination);
+    return true;
+  }
+
+  Future<String?> _getCurrentTravelDestination() async {
+    final profileResponse = await ApiCallsV1.getOwnProfileExtended(limit: 3);
+    if (profileResponse is OwnProfileExtended) {
+      return profileResponse.travel?.destination;
+    }
+
+    log("Unable to resolve travel destination before travel tap routing: $profileResponse");
+    return null;
+  }
+
+  Future<void> _openForeignStocksPageIfNeeded({String? temporaryDestinationCountry}) async {
+    await _preferencesCompleter.future;
+    if (!mounted || routeName == "foreign_stock" || _openingForeignStocksExternally) return;
+
+    _openingForeignStocksExternally = true;
+
+    if (!_webViewProvider.webViewSplitActive) {
+      _webViewProvider.browserShowInForeground = false;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || routeName == "foreign_stock") {
+        _openingForeignStocksExternally = false;
+        return;
+      }
+
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (BuildContext context) =>
+                  ForeignStockPage(apiKey: UserHelper.apiKey, temporaryDestinationCountry: temporaryDestinationCountry),
+            ),
+          )
+          .whenComplete(() {
+            _openingForeignStocksExternally = false;
+          });
+    });
   }
 
   void _openDrawer() {
@@ -3065,9 +3131,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           elevation: 0.0,
           backgroundColor: Colors.transparent,
           content: SingleChildScrollView(
@@ -3075,23 +3139,12 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
               children: <Widget>[
                 SingleChildScrollView(
                   child: Container(
-                    padding: const EdgeInsets.only(
-                      top: 45,
-                      bottom: 16,
-                      left: 16,
-                      right: 16,
-                    ),
+                    padding: const EdgeInsets.only(top: 45, bottom: 16, left: 16, right: 16),
                     margin: const EdgeInsets.only(top: 15),
                     decoration: BoxDecoration(
                       color: _themeProvider!.secondBackground,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 10.0,
-                          offset: Offset(0.0, 10.0),
-                        ),
-                      ],
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10.0, offset: Offset(0.0, 10.0))],
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min, // To make the card compact
@@ -3111,19 +3164,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                           ),
                         ),
                         Flexible(
-                          child: Text(
-                            update,
-                            style: TextStyle(fontSize: 11, color: _themeProvider!.mainText),
-                          ),
+                          child: Text(update, style: TextStyle(fontSize: 11, color: _themeProvider!.mainText)),
                         ),
                         const SizedBox(height: 15),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: <Widget>[
                             TextButton(
-                              child: const Text(
-                                "Stock Exchange",
-                              ),
+                              child: const Text("Stock Exchange"),
                               onPressed: () async {
                                 _webViewProvider.openBrowserPreference(
                                   context: context,
@@ -3141,7 +3189,7 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
                               },
                             ),
                           ],
-                        )
+                        ),
                       ],
                     ),
                   ),
@@ -3191,7 +3239,8 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
         const String channelSubtitle = 'Manual scripts';
         const String channelDescription = 'Manual notifications for scripts';
         final String notificationTitle = 'Script Update Available';
-        final String notificationSubtitle = 'You have $i script update${i == 1 ? "" : "s"} available, '
+        final String notificationSubtitle =
+            'You have $i script update${i == 1 ? "" : "s"} available, '
             'visit the UserScripts section to update them';
         final int notificationId = 777;
         final String notificationPayload = "scriptupdate";
@@ -3228,8 +3277,10 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
           payload: notificationPayload,
         );
       }
-      log("UserScripts checkForUpdates() completed with $i updates available, $alreadyAvailableCount "
-          "already prompted, should notify: ${_userScriptsProvider.userScriptsNotifyUpdates}");
+      log(
+        "UserScripts checkForUpdates() completed with $i updates available, $alreadyAvailableCount "
+        "already prompted, should notify: ${_userScriptsProvider.userScriptsNotifyUpdates}",
+      );
     });
   }
 
@@ -3259,13 +3310,14 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
 
       if (!isAndroid && !isIos) return;
       final bool enabledForPlatform = isAndroid
-          ? _settingsProvider.androidLiveActivityTravelEnabled
-          : _settingsProvider.iosLiveActivityTravelEnabled;
+          ? (_settingsProvider.androidLiveActivityTravelEnabled || _settingsProvider.androidLiveActivityRacingEnabled)
+          : (_settingsProvider.iosLiveActivityTravelEnabled || _settingsProvider.iosLiveActivityRacingEnabled);
       if (!enabledForPlatform) return;
 
       if (isIos && kSdkIos < 16.2) {
         // Regardless of user settings, disable Live Activities on iOS versions below 16.2
         _settingsProvider.iosLiveActivityTravelEnabled = false;
+        _settingsProvider.iosLiveActivityRacingEnabled = false;
         return;
       }
 
@@ -3277,7 +3329,13 @@ class DrawerPageState extends State<DrawerPage> with WidgetsBindingObserver, Aut
       final travelController = Get.find<LiveActivityTravelController>();
 
       bridgeController.initializeHandler();
-      await travelController.activate();
+      if (isAndroid || _settingsProvider.iosLiveActivityTravelEnabled) {
+        await travelController.activate();
+      }
+      if ((isIos && _settingsProvider.iosLiveActivityRacingEnabled) ||
+          (isAndroid && _settingsProvider.androidLiveActivityRacingEnabled)) {
+        await Get.find<LiveActivityRacingController>().activate();
+      }
     });
   }
 

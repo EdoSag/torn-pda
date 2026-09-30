@@ -942,7 +942,7 @@ class TipsPageState extends State<TipsPage> with WidgetsBindingObserver {
                                 await platform.invokeMethod('openBatterySettings');
                                 _refreshBatteryStatus();
                               } catch (e) {
-                                print("Error opening battery settings: $e");
+                                debugPrint("Error opening battery settings: $e");
                               }
                             },
                             child: const Text("Battery Settings"),
@@ -1328,6 +1328,15 @@ class TipsPageState extends State<TipsPage> with WidgetsBindingObserver {
       ),
     );
 
+    tips.add(
+      ExpandableTip(
+        headerValue: "Sync with TornW3B",
+        expandedValue: "If you use TornW3B, tap on the options icon while in the Trades section in game. "
+            "You can enable TornW3B pricing, generate editable receipts and compare your trade against market prices from Torn PDA.\n\n"
+            "Only one external trading service can be active at a time, so choose the one that best matches your workflow.",
+      ),
+    );
+
     // AWH DISABLED
     // tips.add(
     //   ExpandableTip(
@@ -1580,7 +1589,7 @@ class TipsPageState extends State<TipsPage> with WidgetsBindingObserver {
       final bool isRestricted = await platform.invokeMethod('checkBatteryOptimization');
       return isRestricted;
     } catch (e) {
-      print("Error checking battery optimization: $e");
+      debugPrint("Error checking battery optimization: $e");
       return null;
     }
   }

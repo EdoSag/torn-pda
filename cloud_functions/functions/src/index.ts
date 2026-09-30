@@ -34,7 +34,8 @@ import {
 } from "./prefs_backup";
 import { sendTroubleshootingAutoNotification } from "./troubleshooting_notification";
 import { sendForumsSubscription } from "./forums";
-import { registerPushToStartToken, sendTestTravelPushToManuito } from "./la_functions";
+import { registerActivityToken, registerPushToStartToken, sendTestTravelPushToManuito } from "./la_functions";
+import { recalculateStats } from "./stats_recalc";
 
 export const alerts = {
   checkIOS: checkIOS,
@@ -107,7 +108,12 @@ export const forums = {
 
 export const liveActivities = {
   registerPushToStartToken: registerPushToStartToken,
+  registerActivityToken: registerActivityToken,
   sendTestTravelPushToManuito: sendTestTravelPushToManuito,
+};
+
+export const stats = {
+  recalculateStats: recalculateStats
 };
 
 export { lookupPlayerByApiKey } from "./players";

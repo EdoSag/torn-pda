@@ -23,6 +23,8 @@ import 'package:torn_pda/providers/webview_provider.dart';
 import 'package:torn_pda/utils/country_check.dart';
 import 'package:torn_pda/utils/html_parser.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
+import 'package:torn_pda/widgets/ffscouter/ffscouter_activity_badge.dart';
+import 'package:torn_pda/widgets/ffscouter/ffscouter_flight_info.dart';
 import 'package:torn_pda/widgets/player_notes_dialog.dart';
 import 'package:torn_pda/widgets/webviews/chaining_payload.dart';
 import 'package:torn_pda/widgets/webviews/webview_stackview.dart';
@@ -74,7 +76,7 @@ class TargetCardState extends State<TargetCard> {
   Widget build(BuildContext context) {
     _target = widget.targetModel;
     _returnLastUpdated();
-    _themeProvider = Provider.of<ThemeProvider>(context);
+    _themeProvider = Provider.of<ThemeProvider>(context, listen: false);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5),
       child: Card(
@@ -216,7 +218,7 @@ class TargetCardState extends State<TargetCard> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      _returnRespectFF(_target!.respectGain, _target!.fairFight),
+                      _returnRespectFF(_target!.respectGain, _targetsProvider.getEffectiveFairFight(_target!)),
                       _returnHealth(_target!),
                     ],
                   ),
@@ -228,6 +230,10 @@ class TargetCardState extends State<TargetCard> {
                     children: <Widget>[
                       Row(
                         children: <Widget>[
+                          FFScouterFlightInfo(
+                            playerId: _target!.playerId!,
+                            isTraveling: _target!.status?.state == "Traveling",
+                          ),
                           _travelIcon(),
                           Container(
                             width: 14,
@@ -245,6 +251,7 @@ class TargetCardState extends State<TargetCard> {
                                   : _target!.lastAction!.relative!.replaceAll(' ago', ''),
                             ),
                           ),
+                          FFScouterActivityBadge(playerId: _target!.playerId!, playerName: _target!.name),
                         ],
                       ),
                       Expanded(
@@ -697,13 +704,13 @@ class TargetCardState extends State<TargetCard> {
               Padding(
                 padding: const EdgeInsets.only(right: 3),
                 child: RotatedBox(
-                  quarterTurns: _target!.status!.description!.contains('Traveling to ')
-                      ? 1 // If traveling to another country
-                      : _target!.status!.description!.contains('Returning ')
-                          ? 3 // If returning to Torn
-                          : 0, // If staying abroad (blue but not moving)
+                  quarterTurns: switch (getTravelDirection(description: _target!.status!.description)) {
+                    TravelDirection.outbound => 1, // If traveling to another country
+                    TravelDirection.returning => 3, // If returning to Torn
+                    TravelDirection.none => 0, // If staying abroad (blue but not moving)
+                  },
                   child: Icon(
-                    _target!.status!.description!.contains('In ')
+                    isAtLocation(description: _target!.status!.description)
                         ? Icons.location_city_outlined
                         : Icons.airplanemode_active,
                     color: Colors.blue,
@@ -905,7 +912,7 @@ class TargetCardState extends State<TargetCard> {
 
         _webViewProvider.openBrowserPreference(
           context: context,
-          url: 'https://www.torn.com/loader.php?sid=attack&user2ID=${attacksIds[0]}',
+          url: 'https://www.torn.com/page.php?sid=attack&user2ID=${attacksIds[0]}',
           browserTapType: shortTap ? BrowserTapType.chainShort : BrowserTapType.chainLong,
           isChainingBrowser: true,
           chainingPayload: ChainingPayload()
@@ -919,7 +926,7 @@ class TargetCardState extends State<TargetCard> {
         );
 
       case BrowserSetting.external:
-        final url = 'https://www.torn.com/loader.php?sid='
+        final url = 'https://www.torn.com/page.php?sid='
             'attack&user2ID=${_target!.playerId}';
         if (await canLaunchUrl(Uri.parse(url))) {
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);

@@ -6,9 +6,11 @@ import 'package:torn_pda/models/api_v2/torn_v2.swagger.dart';
 
 enum ApiSelection_v1 {
   appWidget,
+  keyValidation,
   travel,
   ownBasic,
   ownExtended,
+  ownExtendedWithEvents,
   events,
   ownPersonalStats,
   ownMisc,
@@ -38,6 +40,7 @@ enum ApiSelection_v2 {
   marketItem,
   userMarketItems,
   userProfileMisc,
+  userVirus,
   otherUserProfile,
   tornCalendar,
   userCalendar,

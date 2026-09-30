@@ -13,11 +13,14 @@ import workmanager_apple
 #endif
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 
   var iconChannel: FlutterMethodChannel!
   var memoryChannel: FlutterMethodChannel!
   var liveActivityChannel: FlutterMethodChannel!
+
+  // LA tokens must not cross the channel before the engine runs (see markEngineRunning)
+  private var flutterEngineRunning = false
 
   lazy var liveActivityManager: Any? = {
     if #available(iOS 16.2, *) {
@@ -33,6 +36,20 @@ import workmanager_apple
     return liveActivityManager as? LiveActivityManager
   }
 
+  lazy var racingLiveActivityManager: Any? = {
+    if #available(iOS 16.2, *) {
+      let manager = RacingLiveActivityManager()
+      return manager
+    } else {
+      return nil
+    }
+  }()
+
+  @available(iOS 16.2, *)
+  private var racingActivityManager: RacingLiveActivityManager? {
+    return racingLiveActivityManager as? RacingLiveActivityManager
+  }
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -41,8 +58,6 @@ import workmanager_apple
     if #available(iOS 10.0, *) {
       UNUserNotificationCenter.current().delegate = self
     }
-
-    GeneratedPluginRegistrant.register(with: self)
 
     if #available(iOS 17, *) {
       HomeWidgetBackgroundWorker.setPluginRegistrantCallback { registry in
@@ -67,11 +82,37 @@ import workmanager_apple
 
     WorkmanagerDebug.setCurrent(LoggingDebugHandler())
 
-    let controller: FlutterViewController = window?.rootViewController as! FlutterViewController
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // Any inbound Dart call proves the engine is running: push tokens withheld until then.
+  // Also covers push-to-start background launches, where the token arrives with no Dart
+  // running and gets resynced on the next real app open
+  private func markEngineRunning() {
+    if flutterEngineRunning { return }
+    flutterEngineRunning = true
+    if #available(iOS 16.2, *), let channel = liveActivityChannel {
+      if let token = activityManager?.activityPushToken {
+        channel.invokeMethod(
+          "liveActivityTokenUpdated",
+          arguments: ["activityType": "travel", "token": token])
+      }
+      if let token = racingActivityManager?.activityPushToken {
+        channel.invokeMethod(
+          "liveActivityTokenUpdated",
+          arguments: ["activityType": "racing", "token": token])
+      }
+    }
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+    let messenger = engineBridge.applicationRegistrar.messenger()
 
     // Set up the Flutter channel to handle AlarmKit
     let alarmChannel = FlutterMethodChannel(
-      name: "tornpda/alarm", binaryMessenger: controller.binaryMessenger)
+      name: "tornpda/alarm", binaryMessenger: messenger)
     alarmChannel.setMethodCallHandler {
       (call: FlutterMethodCall, result: @escaping FlutterResult) in
 
@@ -86,9 +127,10 @@ import workmanager_apple
 
     // Set up the Flutter channel to check protected data availability (Keychain diagnostics)
     let protectedDataChannel = FlutterMethodChannel(
-      name: "tornpda/protected_data", binaryMessenger: controller.binaryMessenger)
+      name: "tornpda/protected_data", binaryMessenger: messenger)
     protectedDataChannel.setMethodCallHandler {
-      (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      self?.markEngineRunning()
       if call.method == "isProtectedDataAvailable" {
         result(UIApplication.shared.isProtectedDataAvailable)
       } else {
@@ -98,8 +140,9 @@ import workmanager_apple
 
     // Set up the Flutter channel to handle icon changes
     iconChannel = FlutterMethodChannel(
-      name: "tornpda/icon", binaryMessenger: controller.binaryMessenger)
+      name: "tornpda/icon", binaryMessenger: messenger)
     iconChannel.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      self.markEngineRunning()
       if call.method == "changeIcon" {
         // Handle the passed arguments properly
         if let args = call.arguments as? [String: Any],
@@ -117,7 +160,7 @@ import workmanager_apple
 
     // Set up the Flutter channel to handle memory info
     memoryChannel = FlutterMethodChannel(
-      name: "tornpda/memory", binaryMessenger: controller.binaryMessenger)
+      name: "tornpda/memory", binaryMessenger: messenger)
     memoryChannel.setMethodCallHandler { call, result in
       // Prevent uncaught errors from crashing the app
       do {
@@ -205,12 +248,40 @@ import workmanager_apple
     // MARK: - Live Activity Channel Initialization
     liveActivityChannel = FlutterMethodChannel(
       name: "com.tornpda.liveactivity",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: messenger
     )
 
     if #available(iOS 16.2, *) {
+      self.activityManager?.onNewActivityPushToken = { [weak self] token in
+        // ActivityKit delivers off the main thread and possibly before the engine runs;
+        // channel calls need both, and a withheld token is resynced by markEngineRunning
+        DispatchQueue.main.async {
+          guard let self, self.flutterEngineRunning else { return }
+          self.liveActivityChannel.invokeMethod(
+            "liveActivityTokenUpdated",
+            arguments: [
+              "activityType": "travel",
+              "token": token as Any,
+            ])
+        }
+      }
+      self.racingActivityManager?.onNewActivityPushToken = { [weak self] token in
+        DispatchQueue.main.async {
+          guard let self, self.flutterEngineRunning else { return }
+          self.liveActivityChannel.invokeMethod(
+            "liveActivityTokenUpdated",
+            arguments: [
+              "activityType": "racing",
+              "token": token as Any,
+            ])
+        }
+      }
+
       liveActivityChannel.setMethodCallHandler { [weak self] (call, result) in
-        guard let self = self, let manager = self.activityManager else {
+        guard let self = self,
+          let manager = self.activityManager,
+          let racingManager = self.racingActivityManager
+        else {
           result(
             FlutterError(
               code: "UNAVAILABLE",
@@ -220,6 +291,7 @@ import workmanager_apple
           )
           return
         }
+        self.markEngineRunning()
         let args = call.arguments as? [String: Any]
 
         switch call.method {
@@ -336,6 +408,62 @@ import workmanager_apple
             }
           }
 
+        case "startRacingActivity":
+          guard let currentArgs = args,
+            let stateIdentifier = currentArgs["stateIdentifier"] as? String,
+            let phase = currentArgs["phase"] as? String,
+            let titleText = currentArgs["titleText"] as? String,
+            let bodyText = currentArgs["bodyText"] as? String,
+            let currentServerTimestamp = currentArgs["currentServerTimestamp"] as? Int,
+            let showTimer = currentArgs["showTimer"] as? Bool
+          else {
+            result(
+              FlutterError(
+                code: "INVALID_ARGUMENTS",
+                message: "Missing or invalid arguments for startRacingActivity.",
+                details: nil
+              )
+            )
+            return
+          }
+          let targetTimeTimestamp = currentArgs["targetTimeTimestamp"] as? Int
+          let startTimeTimestamp = currentArgs["startTimeTimestamp"] as? Int
+          Task {
+            do {
+              try await racingManager.startRacingActivity(
+                stateIdentifier: stateIdentifier,
+                phase: phase,
+                titleText: titleText,
+                bodyText: bodyText,
+                targetTimeTimestamp: targetTimeTimestamp,
+                startTimeTimestamp: startTimeTimestamp,
+                currentServerTimestamp: currentServerTimestamp,
+                showTimer: showTimer
+              )
+              result(nil)
+            } catch {
+              let nsError = error as NSError
+              result(
+                FlutterError(
+                  code: "START_FAILED",
+                  message: error.localizedDescription,
+                  details: [
+                    "domain": nsError.domain, "code": nsError.code, "userInfo": nsError.userInfo,
+                  ]
+                )
+              )
+            }
+          }
+
+        case "endRacingActivity":
+          Task {
+            await racingManager.endCurrentRacingActivity()
+            result(nil)
+          }
+
+        case "isAnyRacingActivityActive":
+          result(racingManager.isAnyRacingActivityActive())
+
         case "endTravelActivity":
           Task {
             await manager.endCurrentTravelActivity()
@@ -356,7 +484,17 @@ import workmanager_apple
           }
 
           if #available(iOS 17.2, *) {
-            let token = manager.getPushToStartToken(for: activityType)
+            let token: String?
+            switch activityType {
+            case "travel":
+              token = manager.getPushToStartToken(for: activityType)
+            case "racing":
+              token = Activity<RacingActivityAttributes>.pushToStartToken?.map {
+                String(format: "%02x", $0)
+              }.joined()
+            default:
+              token = nil
+            }
             result(token)
           } else {
             result(nil)
@@ -367,6 +505,7 @@ import workmanager_apple
         }
       }
       self.activityManager?.checkAndAdoptExistingActivities()
+      self.racingActivityManager?.checkAndAdoptExistingActivities()
     } else {
       liveActivityChannel.setMethodCallHandler { (call, result) in
         print("Live Activities method '\(call.method)' called on unsupported iOS version.")
@@ -379,14 +518,14 @@ import workmanager_apple
         )
       }
     }
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    handleSceneDidBecomeActive()
   }
 
-  // MARK: - Application Lifecycle (Live Activities)
-  override func applicationDidBecomeActive(_ application: UIApplication) {
-    super.applicationDidBecomeActive(application)
+  // MARK: - Scene Lifecycle (Live Activities)
+  func handleSceneDidBecomeActive() {
     if #available(iOS 16.2, *) {
       self.activityManager?.checkAndAdoptExistingActivities()
+      self.racingActivityManager?.checkAndAdoptExistingActivities()
     }
   }
 

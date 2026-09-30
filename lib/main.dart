@@ -40,6 +40,7 @@ import 'package:torn_pda/providers/attacks_provider.dart';
 import 'package:torn_pda/providers/audio_controller.dart';
 import 'package:torn_pda/providers/awards_provider.dart';
 import 'package:torn_pda/providers/chain_status_controller.dart';
+import 'package:torn_pda/providers/profile_api_calls_controller.dart';
 import 'package:torn_pda/providers/crimes_provider.dart';
 import 'package:torn_pda/providers/friends_provider.dart';
 import 'package:torn_pda/providers/periodic_execution_controller.dart';
@@ -57,7 +58,10 @@ import 'package:torn_pda/providers/theme_provider.dart';
 import 'package:torn_pda/providers/trades_provider.dart';
 import 'package:torn_pda/providers/user_controller.dart';
 import 'package:torn_pda/providers/userscripts_provider.dart';
+import 'package:torn_pda/providers/ffscouter_activity_controller.dart';
 import 'package:torn_pda/providers/ffscouter_cache_controller.dart';
+import 'package:torn_pda/providers/ffscouter_flights_controller.dart';
+import 'package:torn_pda/providers/ffscouter_premium_controller.dart';
 import 'package:torn_pda/providers/war_controller.dart';
 import 'package:torn_pda/providers/webview_provider.dart';
 import 'package:torn_pda/torn-pda-native/auth/native_auth_provider.dart';
@@ -65,19 +69,22 @@ import 'package:torn_pda/torn-pda-native/auth/native_user_provider.dart';
 import 'package:torn_pda/utils/appwidget/pda_widget.dart';
 import 'package:torn_pda/utils/background_inbox.dart';
 import 'package:torn_pda/utils/connectivity/connectivity_handler.dart';
+import 'package:torn_pda/utils/crashlytics_identity.dart';
 import 'package:torn_pda/utils/http_overrides.dart';
 import 'package:torn_pda/utils/live_activities/live_activity_bridge.dart';
+import 'package:torn_pda/utils/live_activities/live_activity_racing_controller.dart';
 import 'package:torn_pda/utils/live_activities/live_activity_travel_controller.dart';
 import 'package:torn_pda/utils/notification.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 import 'package:torn_pda/utils/shared_prefs_backup.dart';
+import 'package:torn_pda/widgets/webviews/browser_engine_prewarm.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:workmanager/workmanager.dart';
 
 // TODO (App release)
-const String appVersion = '3.12.2';
-const String androidCompilation = '630';
-const String iosCompilation = '630';
+const String appVersion = '3.16.0';
+const String androidCompilation = '677';
+const String iosCompilation = '677';
 
 /// All Firestore fields related to alerts configuration
 /// Used for auth recovery and local backup restoration
@@ -125,7 +132,7 @@ const bool pointFunctionsEmulatorToLocal = false;
 // TODO (App release)
 const bool enableWakelockForDebug = true;
 
-final enableAccessibilityTools = false;
+const enableAccessibilityTools = false;
 
 bool logAndShowToUser = false;
 
@@ -155,12 +162,7 @@ int kSdkAndroid = 0;
 bool _isFirebaseInitialized = false;
 
 class ReceivedNotification {
-  ReceivedNotification({
-    required this.id,
-    required this.title,
-    required this.body,
-    required this.payload,
-  });
+  ReceivedNotification({required this.id, required this.title, required this.body, required this.payload});
 
   final int id;
   final String title;
@@ -266,6 +268,20 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   @override
+  void didHaveMemoryPressure() {
+    // Free background tabs' native WebViews under memory pressure so Android is less likely to kill
+    // the shared renderer (which is seen as a spontaneous tab reload)
+    //
+    // Only while the app is in use: Android delivers TRIM_MEMORY_UI_HIDDEN every single time the
+    // app is minimised and Flutter forwards it here with no level attached
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+
+    try {
+      _webViewProvider.hibernateInactiveTabs();
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -296,8 +312,9 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
       brightness: _themeProvider.currentTheme == AppTheme.light ? Brightness.light : Brightness.dark,
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
-          foregroundColor:
-              _themeProvider.accesibilityNoTextColors ? WidgetStateProperty.all(_themeProvider.mainText) : null,
+          foregroundColor: _themeProvider.accesibilityNoTextColors
+              ? WidgetStateProperty.all(_themeProvider.mainText)
+              : null,
         ),
       ),
     );
@@ -307,9 +324,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final homeDrawer = Navigator(
       key: const ValueKey('main_drawer_navigator'),
       onGenerateRoute: (_) {
-        return MaterialPageRoute(
-          builder: (BuildContext _) => DrawerPage(),
-        );
+        return MaterialPageRoute(builder: (BuildContext _) => DrawerPage());
       },
     );
 
@@ -322,27 +337,29 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
         builder: (context, child) {
           final botToastWrappedChild = BotToastInit()(context, child);
 
-          if (enableAccessibilityTools && kDebugMode) {
-            return AccessibilityTools(
-              // Set to null to disable tap area checking
-              minimumTapAreas: null,
-              // Check for semantic labels
-              checkSemanticLabels: true,
-              // Check for flex overflows
-              checkFontOverflows: false,
-              // Check for image labels
-              checkImageLabels: false,
-              // Set how much info about issues is printed
-              logLevel: LogLevel.verbose,
-              // Set where the buttons are placed
-              buttonsAlignment: ButtonsAlignment.bottomRight,
-              // Enable or disable draging the buttons around
-              enableButtonsDrag: true,
-              child: botToastWrappedChild,
-            );
-          } else {
-            return botToastWrappedChild;
-          }
+          final Widget content = (enableAccessibilityTools && kDebugMode)
+              ? AccessibilityTools(
+                  // Set to null to disable tap area checking
+                  minimumTapAreas: null,
+                  // Check for semantic labels
+                  checkSemanticLabels: true,
+                  // Check for flex overflows
+                  checkFontOverflows: false,
+                  // Check for image labels
+                  checkImageLabels: false,
+                  // Set how much info about issues is printed
+                  logLevel: LogLevel.verbose,
+                  // Set where the buttons are placed
+                  buttonsAlignment: ButtonsAlignment.bottomRight,
+                  // Enable or disable draging the buttons around
+                  enableButtonsDrag: true,
+                  child: botToastWrappedChild,
+                )
+              : botToastWrappedChild;
+
+          // Warm the Android WebView engine offstage (1x1, behind content, non-blocking) to avoid the
+          // #2843 cold-start onWebViewCreated drop. Can be changed via RC
+          return Stack(alignment: Alignment.topLeft, children: [const BrowserEnginePrewarm(), content]);
         },
         navigatorObservers: [BotToastNavigatorObserver()],
         scrollBehavior: !Platform.isWindows
@@ -374,19 +391,9 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     index: wProvider.browserShowInForeground ? 1 : 0,
                     children: [
                       // Index 0: Drawer visible
-                      Stack(
-                        children: [
-                          homeDrawerWidget,
-                          const AppBorder(),
-                        ],
-                      ),
+                      Stack(children: [homeDrawerWidget, const AppBorder()]),
                       // Index 1: Browser mode - drawer hidden but maintains state
-                      Stack(
-                        children: [
-                          _mainBrowser,
-                          const AppBorder(),
-                        ],
-                      ),
+                      Stack(children: [_mainBrowser, const AppBorder()]),
                     ],
                   );
                 } else {
@@ -417,13 +424,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     );
                   } else {
                     // Fallback to normal stack if split screen conditions not met
-                    home = Stack(
-                      children: [
-                        homeDrawerWidget,
-                        _mainBrowser,
-                        const AppBorder(),
-                      ],
-                    );
+                    home = Stack(children: [homeDrawerWidget, _mainBrowser, const AppBorder()]);
                   }
                 }
 
@@ -528,9 +529,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (Platform.isWindows) {
       final localAppData = Platform.environment['APPDATA'];
       _webViewProvider.webViewEnvironment = await WebViewEnvironment.create(
-        settings: WebViewEnvironmentSettings(
-          userDataFolder: '$localAppData\\com.manuito\\torn_pda\\webview_windows',
-        ),
+        settings: WebViewEnvironmentSettings(userDataFolder: '$localAppData\\com.manuito\\torn_pda\\webview_windows'),
       );
     }
 
@@ -598,7 +597,10 @@ Future<void> _handleNotificationResponse(NotificationResponse notificationRespon
   } catch (e, stackTrace) {
     log("Error handling notification response: $e");
     logErrorToCrashlytics(
-        "Error handling notification response", "Notification response handler failed: $e", stackTrace);
+      "Error handling notification response",
+      "Notification response handler failed: $e",
+      stackTrace,
+    );
   }
 }
 
@@ -633,7 +635,10 @@ Future<void> _initializePlatformSpecifics() async {
   } catch (e, stackTrace) {
     log("Error initializing platform specifics: $e");
     logErrorToCrashlytics(
-        "Error initializing platform specifics", "Platform specifics initialization failed: $e", stackTrace);
+      "Error initializing platform specifics",
+      "Platform specifics initialization failed: $e",
+      stackTrace,
+    );
   }
 }
 
@@ -644,7 +649,10 @@ Future<void> _initializeBackupAndTheme(WidgetsBinding widgetsBinding) async {
   } catch (e, stackTrace) {
     log("Error initializing backup and theme: $e");
     logErrorToCrashlytics(
-        "Error initializing backup and theme", "Backup and theme initialization failed: $e", stackTrace);
+      "Error initializing backup and theme",
+      "Backup and theme initialization failed: $e",
+      stackTrace,
+    );
   }
 }
 
@@ -701,10 +709,14 @@ Future<void> _initializeGetXControllers() async {
     Get.put(ApiCallerController(), permanent: true);
     Get.put(WarController(), permanent: true);
     Get.put(FFScouterCacheController(), permanent: true);
+    Get.put(FFScouterPremiumController(), permanent: true);
+    Get.put(FFScouterFlightsController(), permanent: true);
+    Get.put(FFScouterActivityController(), permanent: true);
     Get.put(StakeoutsController(), permanent: true);
     Get.put(PlayerNotesController(), permanent: true);
     Get.put(PeriodicExecutionController(), permanent: true);
     Get.put(ChainStatusController(), permanent: true);
+    Get.put(ProfileApiCallsController(), permanent: true);
 
     final bool enableLiveUpdateBridge = Platform.isAndroid || (Platform.isIOS && kSdkIos >= 16.2);
     if (enableLiveUpdateBridge) {
@@ -713,10 +725,16 @@ Future<void> _initializeGetXControllers() async {
     if ((Platform.isIOS && kSdkIos >= 16.2) || (Platform.isAndroid && kSdkAndroid >= 26)) {
       Get.put(LiveActivityTravelController(), permanent: true);
     }
+    if ((Platform.isIOS && kSdkIos >= 16.2) || (Platform.isAndroid && kSdkAndroid >= 26)) {
+      Get.put(LiveActivityRacingController(), permanent: true);
+    }
   } catch (e, stackTrace) {
     log("Error initializing GetX controllers: $e");
     logErrorToCrashlytics(
-        "Error initializing GetX controllers", "GetX controllers initialization failed: $e", stackTrace);
+      "Error initializing GetX controllers",
+      "GetX controllers initialization failed: $e",
+      stackTrace,
+    );
   }
 }
 
@@ -781,19 +799,20 @@ Future<void> _initializeFirebase() async {
     if (!Platform.isWindows) {
       FirebaseMessaging.onBackgroundMessage(messagingBackgroundHandler);
 
+      // Before the rest of the startup, which is where the fatals we cannot attribute happen
+      await seedCrashlyticsIdentityFromStorage();
+
       if (kDebugMode) {
         if (pointFunctionsEmulatorToLocal) {
           FirebaseFunctions.instanceFor(region: 'us-east4').useFunctionsEmulator('192.168.1.172', 5001);
         }
         await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(false);
-
-        //if (kDebugMode) {
-        PlatformDispatcher.instance.onError = (error, stack) {
-          FirebaseCrashlytics.instance.recordError(error, stack, fatal: false);
-          return false;
-        };
-        //}
       }
+
+      PlatformDispatcher.instance.onError = (error, stack) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: false);
+        return false;
+      };
 
       FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterError;
     }
@@ -812,16 +831,17 @@ Future<void> _initializePlatformPlugins() async {
   } catch (e, stackTrace) {
     log("Error initializing platform plugins: $e");
     logErrorToCrashlytics(
-        "Error initializing platform plugins", "Platform plugins initialization failed: $e", stackTrace);
+      "Error initializing platform plugins",
+      "Platform plugins initialization failed: $e",
+      stackTrace,
+    );
   }
 }
 
 Future<void> _initializeAudioAndConnectivity() async {
   try {
     AudioPlayer.global.setAudioContext(
-      AudioContext(
-        android: const AudioContextAndroid(audioFocus: AndroidAudioFocus.gainTransientMayDuck),
-      ),
+      AudioContext(android: const AudioContextAndroid(audioFocus: AndroidAudioFocus.gainTransientMayDuck)),
     );
 
     if (await Prefs().getPdaConnectivityCheckRC()) {
@@ -833,7 +853,10 @@ Future<void> _initializeAudioAndConnectivity() async {
   } catch (e, stackTrace) {
     log("Error initializing audio and connectivity: $e");
     logErrorToCrashlytics(
-        "Error initializing audio and connectivity", "Audio and connectivity initialization failed: $e", stackTrace);
+      "Error initializing audio and connectivity",
+      "Audio and connectivity initialization failed: $e",
+      stackTrace,
+    );
   }
 }
 
@@ -866,13 +889,7 @@ Future<void> _shouldSyncDeviceTheme(WidgetsBinding widgetsBinding) async {
   }
 }
 
-void logToUser(
-  String? message, {
-  int duration = 3,
-  Color? textColor,
-  Color? backgroundcolor,
-  Color? borderColor,
-}) {
+void logToUser(String? message, {int duration = 3, Color? textColor, Color? backgroundcolor, Color? borderColor}) {
   log(message.toString());
   if (message == null) return;
   backgroundcolor ??= Colors.red.shade600;
@@ -885,22 +902,26 @@ void logToUser(
       builder: (BuildContext context, ToastificationItem holder) {
         return Center(
           child: GestureDetector(
-              onTap: () => toastification.dismiss(holder),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: backgroundcolor,
-                  border: Border.all(color: borderColor!, width: 2),
-                ),
-                padding: const EdgeInsets.all(8),
-                margin: const EdgeInsets.all(2),
-                child: Column(
-                  children: [
-                    Text("Debug Message\n", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
-                    Text(message.toString(), maxLines: 10, style: TextStyle(color: textColor)),
-                  ],
-                ),
-              )),
+            onTap: () => toastification.dismiss(holder),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: backgroundcolor,
+                border: Border.all(color: borderColor!, width: 2),
+              ),
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.all(2),
+              child: Column(
+                children: [
+                  Text(
+                    "Debug Message\n",
+                    style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                  ),
+                  Text(message.toString(), maxLines: 10, style: TextStyle(color: textColor)),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
@@ -928,23 +949,22 @@ class AppBorder extends StatefulWidget {
 class AppBorderState extends State<AppBorder> {
   @override
   Widget build(BuildContext context) {
-    return GetBuilder<ChainStatusController>(builder: (chainP) {
-      return IgnorePointer(
-        child: Column(
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    width: chainP.watcherActive ? 3 : 0,
-                    color: chainP.borderColor,
+    return GetBuilder<ChainStatusController>(
+      builder: (chainP) {
+        return IgnorePointer(
+          child: Column(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(width: chainP.watcherActive ? 3 : 0, color: chainP.borderColor),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      );
-    });
+            ],
+          ),
+        );
+      },
+    );
   }
 }

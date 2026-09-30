@@ -28,6 +28,14 @@ export const onPlayerAdded = onDocumentCreated(
       promises.push(manageStats("android", 1));
     }
 
+    if (beforeStat.la_travel_push_token) {
+      promises.push(manageStats("la_travel_enabled", 1));
+    }
+
+    if (beforeStat.la_racing_push_token) {
+      promises.push(manageStats("la_racing_enabled", 1));
+    }
+
     await Promise.all(promises);
   }
 );
@@ -128,6 +136,10 @@ export const onPlayerDeleted = onDocumentDeleted(
 
     if (beforeStat.la_travel_push_token) {
       promises.push(manageStats("la_travel_enabled", -1));
+    }
+
+    if (beforeStat.la_racing_push_token) {
+      promises.push(manageStats("la_racing_enabled", -1));
     }
 
     if (beforeStat.platform === "android") {
@@ -275,6 +287,14 @@ export const onPlayerUpdated = onDocumentUpdated({
     );
   }
 
+  const wasRacingLaEnabled = beforeStat.la_racing_push_token ? true : false;
+  const isRacingLaEnabled = afterStat.la_racing_push_token ? true : false;
+  if (wasRacingLaEnabled !== isRacingLaEnabled) {
+    promises.push(
+      manageStats("la_racing_enabled", isRacingLaEnabled ? 1 : -1)
+    );
+  }
+
   if (
     !afterStat.energyNotification &&
     !afterStat.nerveNotification &&
@@ -355,9 +375,7 @@ export const onPlayerUpdated = onDocumentUpdated({
 async function manageStats(statName: string, changeInValue: number) {
   const totalUserRef = admin.database().ref().child("stats").child(statName);
 
-  let totalUsers = parseInt((await totalUserRef.once("value")).val() || "0");
-  totalUsers = totalUsers + changeInValue;
-  await totalUserRef.set(totalUsers);
+  await totalUserRef.transaction((current: number | null) => (current || 0) + changeInValue);
 }
 
 export const lookupPlayerByApiKey = onCall({

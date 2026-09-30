@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GMforPDA
 // @namespace    https://github.com/Kwack-Kwack/GMforPDA
-// @version      2.2.1
+// @version      2.3.0
 // @description  A script that allows native GM functions to be called in Torn PDA.
 // @author       Kwack [2190604]
 // @match        *
@@ -9,6 +9,8 @@
 // ==/UserScript==
 
 ((window, Object, DOMException, AbortController, Promise, localStorage) => {
+	if ("GM" in window) return console.warn("GM already defined, skipping declaration");; // Prevent duplicate injections
+
 	const version = 2.2;
 
 	const __GM_info = {
@@ -19,33 +21,79 @@
 	function __GM_getValue(key, defaultValue) {
 		if (!key) throw new TypeError("No key supplied to GM_getValue");
 		try {
-			const r = localStorage.getItem(key);
+			const r = localStorage ? localStorage.getItem(key) : null;
 			if (typeof r !== "string") return defaultValue;
-			if (r.startsWith("GMV2_"))
-				return JSON.parse(r.slice(5)) ?? defaultValue;
-			else return r ?? defaultValue;
+			if (!r.startsWith("GMV2_")) return r ?? defaultValue;
+			const json = r.slice(5);
+			// Guard against "GMV2_undefined" written by a buggy GM_setValue call
+			if (json === "undefined") return defaultValue;
+			return JSON.parse(json) ?? defaultValue;
 		} catch (e) {
 			console.error(e);
 			return defaultValue;
 		}
 	}
+	function __GM_getValues(keys) {
+		if (Array.isArray(keys)) {
+			return keys.reduce((acc, key) => {
+				const value = __GM_getValue(key);
+				if (value !== undefined) acc[key] = value;
+				return acc;
+			}, {});
+		} else {
+			return Object.entries(keys).reduce((acc, [key, defaultValue]) => {
+				const value = __GM_getValue(key, defaultValue);
+				if (value === undefined) acc[key] = defaultValue;
+				else acc[key] = value;
+				return acc;
+			}, {});
+		}
+	}
 	function __GM_setValue(key, value) {
 		if (!key) throw new TypeError("No key supplied to GM_setValue");
-		localStorage.setItem(key, "GMV2_" + JSON.stringify(value));
+		if (!localStorage) return;
+		// JSON.stringify(undefined) returns the JS value undefined (not the string),
+		// which string-concatenates to "GMV2_undefined" — unreadable by JSON.parse.
+		// Treat that the same as deleting the key.
+		const serialized = JSON.stringify(value);
+		if (serialized === undefined) { localStorage.removeItem(key); return; }
+		try {
+			localStorage.setItem(key, "GMV2_" + serialized);
+		} catch (err) {
+			console.warn("PDA-GM: localStorage full, GM_setValue('" + key + "') dropped", err);
+			try {
+				const now = Date.now();
+				if (!window.__pdaGMQuotaToastAt || now - window.__pdaGMQuotaToastAt > 60000) {
+					window.__pdaGMQuotaToastAt = now;
+					// Only if debug messages are on (see PDA_gmStorageQuota handler)
+					window.flutter_inappwebview && window.flutter_inappwebview.callHandler("PDA_gmStorageQuota", key);
+				}
+			} catch (_) {}
+		}
+	}
+	function __GM_setValues(values) {
+		for (const [key, value] of Object.entries(values)) {
+			__GM_setValue(key, value);
+		}
 	}
 	function __GM_deleteValue(key) {
 		if (!key) throw new TypeError("No key supplied to GM_deleteValue");
-		localStorage.removeItem(key);
+		localStorage?.removeItem(key);
+	}
+	function __GM_deleteValues(keys) {
+		for (const key of keys) {
+			__GM_deleteValue(key);
+		}
 	}
 	function __GM_listValues() {
-		return Object.keys(localStorage);
+		return localStorage ? Object.keys(localStorage) : [];
 	}
 	function __GM_addStyle(style) {
 		if (!style || typeof style !== "string") return;
 		const s = document.createElement("style");
 		s.type = "text/css";
 		s.innerHTML = style;
-		document.head.appendChild(s);
+		(document.head || document.documentElement).appendChild(s);
 	}
 	function __GM_notification(...args) {
 		if (typeof args[0] === "object") {
@@ -81,10 +129,12 @@
 		addStyle: __GM_addStyle,
 		deleteValue: async (key) => __GM_deleteValue(key),
 		getValue: async (key, defaultValue) => __GM_getValue(key, defaultValue),
+		getValues: async (keys) => __GM_getValues(keys),
 		listValues: async () => __GM_listValues(),
 		notification: __GM_notification,
 		setClipboard: __GM_setClipboard,
 		setValue: async (key, value) => __GM_setValue(key, value),
+		setValues: async (values) => __GM_setValues(values),
 		xmlHttpRequest: async (details) => {
 			if (!details || typeof details !== "object")
 				throw new TypeError(
@@ -99,8 +149,11 @@
 		GM: Object.freeze(GM),
 		GM_info: Object.freeze(__GM_info),
 		GM_getValue: __GM_getValue,
+		GM_getValues: __GM_getValues,
 		GM_setValue: __GM_setValue,
+		GM_setValues: __GM_setValues,
 		GM_deleteValue: __GM_deleteValue,
+		GM_deleteValues: __GM_deleteValues,
 		GM_listValues: __GM_listValues,
 		GM_addStyle: __GM_addStyle,
 		GM_notification: __GM_notification,
@@ -145,15 +198,34 @@
 				timeoutSignal.addEventListener("abort", () =>
 					rej("Request timed out")
 				);
-				if (!method || method.toLowerCase() !== "post") {
-					PDA_httpGet(url, headers ?? {}).then(res).catch(rej);
-					onprogress?.();
-				} else {
-					PDA_httpPost(url, headers ?? {}, data ?? "")
-						.then(res)
-						.catch(rej);
-					onprogress?.();
+				switch ((method || "").toLowerCase()) {
+					case "post":
+						PDA_httpPost(url, headers ?? {}, data ?? "")
+							.then(res)
+							.catch(rej);
+						break;
+					case "put":
+						PDA_httpPut(url, headers ?? {}, data ?? "")
+							.then(res)
+							.catch(rej);
+						break;
+					case "delete":
+						PDA_httpDelete(url, headers ?? {})
+							.then(res)
+							.catch(rej);
+						break;
+					case "patch":
+						PDA_httpPatch(url, headers ?? {}, data ?? "")
+							.then(res)
+							.catch(rej);
+						break;
+					default:
+						PDA_httpGet(url, headers ?? {})
+							.then(res)
+							.catch(rej);
+						break;
 				}
+				onprogress?.();
 			} catch (e) {
 				rej(e);
 			}
@@ -192,4 +264,9 @@
 			});
 		return { abortController, prom };
 	}
-})(window, Object, DOMException, AbortController, Promise, localStorage);
+})(window, Object, DOMException, AbortController, Promise,
+   // Safe-capture localStorage: accessing it throws SecurityError in some
+   // contexts (restrictive iframes, private-mode storage blocked, etc.).
+   // Passing null lets the GM functions degrade gracefully instead of
+   // aborting the entire IIFE and leaving GM/GM_getValue/... undefined.
+   (() => { try { return localStorage; } catch (_) { return null; } })());

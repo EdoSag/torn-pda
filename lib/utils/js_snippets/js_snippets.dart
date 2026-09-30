@@ -1,8 +1,4 @@
-String easyCrimesJS({
-  required String nerve,
-  required String? crime,
-  required String doCrime,
-}) {
+String easyCrimesJS({required String nerve, required String? crime, required String doCrime}) {
   return '''
     var first_load = true;
     
@@ -164,424 +160,18 @@ String ensureMinDocumentHeightForKeyboardJS({
   ''';
 }
 
-String buyMaxAbroadJS({bool preventBasketKeyboard = true}) {
-  return '''
-
-  var preventBasketKeyboard = $preventBasketKeyboard;
-
-  function parseMoney(text) {
-    var clean = text.replace(/\\\$/g, '').trim().toLowerCase();
-    var multiplier = 1;
-    if (clean.endsWith('m')) {
-        multiplier = 1000000;
-        clean = clean.substring(0, clean.length - 1);
-    } else if (clean.endsWith('b')) {
-        multiplier = 1000000000;
-        clean = clean.substring(0, clean.length - 1);
-    } else if (clean.endsWith('k')) {
-        multiplier = 1000;
-        clean = clean.substring(0, clean.length - 1);
-    }
-    
-    clean = clean.replace(/[^0-9.]/g, '');
-    
-    var val = parseFloat(clean);
-    if (isNaN(val)) return 0;
-    return Math.floor(val * multiplier);
-  }
-
-  function addFillMaxButtons() {
-    
-    // 0. SAFETY CHECK: Ensure we can detect user money
-    // If we can't find money, we might be elsewhere else (e.g. Bank)
-    // or simply can't calculate the max amount
-    const moneyElCheck = document.querySelector('#user-money') || document.querySelector('[data-currency-money]') || document.querySelector('.user-information .money');
-    if (!moneyElCheck) {
-        return;
-    }
-
-    // Improved Mode Detection
-    const isHorizontalMode = () => {
-        // 1. Check for VISIBLE "Type" header
-        const headers = Array.from(document.querySelectorAll('[class*="itemsHeader___"] > div'));
-        const visibleTypeHeader = headers.find(h => 
-            h.textContent.trim().toUpperCase() === 'TYPE' && h.offsetParent !== null
-        );
-        
-        if (visibleTypeHeader) {
-             return true;
-        }
-
-        // 2. Check Button Text
-        const buyBtn = document.querySelector('button.torn-btn[type="submit"]');
-        if (buyBtn) {
-            const text = buyBtn.innerText.trim().toUpperCase();
-            if (text === 'BUY') {
-                return true;
-            }
-        }
-        
-        // 3. Fallback to width
-        return window.innerWidth > 700;
-    };
-    
-    const isHorizontal = isHorizontalMode();
-
-    // 1. CSS INJECTION
-    let style = document.getElementById('pda-buy-max-style');
-    if (!style) {
-        style = document.createElement('style');
-        style.id = 'pda-buy-max-style';
-        document.head.appendChild(style);
-    }
-    
-    // VERTICAL CSS
-    const verticalCSS = `
-            [class*="row___"], [class*="stockHeader___"] {
-                gap: 0 !important;
-            }
-            [class*="row___"] > div, [class*="stockHeader___"] > div {
-                padding-left: 2px !important;
-                padding-right: 2px !important;
-                margin: 0 !important; 
-            }
-            [class*="stockHeader___"] > div:nth-child(3),
-            [class*="row___"] > div:nth-child(3) {
-                display: none !important;
-            }
-            [class*="stockHeader___"] > div:nth-child(4),
-            [class*="row___"] > div:nth-child(4),
-            [class*="stockHeader___"] > div:nth-child(5),
-            [class*="row___"] > div:nth-child(5) {
-                flex: 0 0 auto !important;
-                width: auto !important;
-                min-width: 0 !important;
-                max-width: none !important;
-            }
-            [class*="itemName___"] {
-                flex: 1 1 auto !important;
-                min-width: 40px !important;
-                overflow: hidden !important;
-            }
-            [class*="itemName___"] button {
-                white-space: nowrap !important;
-                overflow: hidden !important;
-                text-overflow: ellipsis !important;
-                max-width: 100% !important;
-                display: block !important;
-            }
-            [class*="buyCell___"] {
-                flex: 0 0 auto !important;
-                width: auto !important;
-                max-width: none !important;
-            }
-    `;
-    
-    // HORIZONTAL CSS
-    const horizontalCSS = `
-            /* Hide Type Column via CSS if possible */
-            /* We will also try JS hiding */
-            [class*="itemsHeader___"] > div:nth-child(3) {
-                display: none !important;
-            }
-            li > div[class*="row___"] > div:nth-child(3) {
-                display: none !important;
-            }
-            
-            /* Ensure buy column has enough space */
-            [class*="tabletColE___"] {
-                min-width: 100px !important;
-                overflow: visible !important;
-            }
-    `;
-
-    const desiredMode = isHorizontal ? 'horizontal' : 'vertical';
-    if (style.getAttribute('data-mode') !== desiredMode) {
-        style.setAttribute('data-mode', desiredMode);
-        style.innerHTML = isHorizontal ? horizontalCSS : verticalCSS;
-    }
-
-    // 2. JS HIDING FOR HORIZONTAL MODE (Type Column)
-    if (isHorizontal) {
-        // Hide Header
-        const headers = document.querySelectorAll('[class*="itemsHeader___"] > div');
-        headers.forEach((h, index) => {
-            if (h.textContent.trim().toUpperCase() === 'TYPE') {
-                h.style.display = 'none';
-                // Also try to hide the corresponding column in rows if we found the index
-                const rows = document.querySelectorAll('li > div[class*="row___"]');
-                rows.forEach(row => {
-                    if (row.children.length > index) {
-                        row.children[index].style.display = 'none';
-                    }
-                });
-            }
-        });
-    }
-
-    // 3. BUTTON INJECTION
-    const buttons = document.querySelectorAll('button.torn-btn[type="submit"]');
-    
-    buttons.forEach(btn => {
-        if (btn.dataset.pdaMaxAdded) return;
-        
-        // Ensure button is inside a list item (item row)
-        // in order to prevent injection on pages like Bank in Cayman
-        if (!btn.closest('li')) return;
-
-        btn.dataset.pdaMaxAdded = 'true';
-        
-        const maxBtn = document.createElement('button');
-        maxBtn.innerText = 'MAX';
-        maxBtn.className = 'torn-btn pda-max-btn';
-        maxBtn.style.padding = '0 8px';
-        maxBtn.style.fontSize = '11px';
-        maxBtn.style.height = '30px'; 
-        maxBtn.style.lineHeight = '12px';
-        maxBtn.type = 'button'; 
-        
-        if (btn.parentNode) {
-            const wrapper = document.createElement('div');
-            wrapper.style.display = 'inline-flex';
-            wrapper.style.flexDirection = 'row';
-            wrapper.style.alignItems = 'center';
-            wrapper.style.marginTop = '3px'; 
-            
-            btn.parentNode.insertBefore(wrapper, btn);
-            
-            wrapper.appendChild(btn);
-            wrapper.appendChild(maxBtn);
-            
-            btn.style.flex = '0 0 auto'; 
-            btn.style.width = 'auto'; 
-            btn.style.margin = '0'; 
-            btn.style.marginBottom = '0';
-            btn.style.marginRight = '5px'; 
-            
-            maxBtn.style.flex = '0 0 auto'; 
-            maxBtn.style.margin = '0';
-        }
-        
-        // 4. CALCULATION LOGIC
-        maxBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            const form = btn.form;
-            const li = btn.closest('li');
-            const currentIsHorizontal = isHorizontalMode();
-            
-            let money = 0;
-            const moneyEl = document.querySelector('#user-money') || document.querySelector('[data-currency-money]');
-            if (moneyEl) {
-              const txt = moneyEl.getAttribute('data-money') || moneyEl.textContent;
-              money = parseInt(txt.replace(/[^0-9]/g, ''));
-            }
-            
-            let cost = 0;
-            let stock = 0;
-            let capacityLeft = 1000;
-
-            let limitFromInput = 0;
-            if (form) {
-                const input = form.querySelector('input.input-money');
-                if (input && input.getAttribute('data-money')) {
-                    limitFromInput = parseInt(input.getAttribute('data-money'));
-                }
-            }
-
-            if (currentIsHorizontal) {
-                // ===== HORIZONTAL MODE =====
-                
-                if (li) {
-                    // 1. Cost Detection (Match Dart Logic: Scan spans)
-                    const spans = li.querySelectorAll('span');
-                    for (const span of spans) {
-                        const txt = span.textContent.trim();
-                        if (txt.includes('\$') && span.getAttribute('aria-hidden') !== 'true') {
-                             cost = parseMoney(txt);
-                        }
-                    }
-                    
-                    // 2. Stock Detection
-                    // Try specific class
-                    let stockCell = li.querySelector('[class*="tabletColC___"]');
-                    if (stockCell) {
-                        const stockText = stockCell.textContent.trim();
-                        const match = stockText.match(/([\\d,]+)/);
-                        if (match) {
-                            stock = parseInt(match[1].replace(/,/g, ''));
-                        }
-                    } else {
-                        // Fallback: Look for "Stock" text
-                         const all = li.querySelectorAll('*');
-                        for (let el of all) {
-                            if (el.textContent.toLowerCase().includes('stock')) {
-                                const match = el.textContent.match(/([\\d,]+)/);
-                                if (match) {
-                                    stock = parseInt(match[1].replace(/,/g, ''));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 3. Capacity
-                const msgEl = document.querySelector('.messageContent___LhCmx');
-                if (msgEl) {
-                    const match = msgEl.textContent.match(/purchased\\s*(\\d+)\\s*\\/\\s*(\\d+)/);
-                    if (match) {
-                        const current = parseInt(match[1]);
-                        const maxCap = parseInt(match[2]);
-                        capacityLeft = maxCap - current;
-                    }
-                }
-                
-            } else {
-                // ===== VERTICAL MODE =====
-                const buyPanel = btn.closest('div[class*="buyPanel___"]');
-                if (buyPanel) {
-                    const question = buyPanel.querySelector('p[class*="question___"]');
-                    if (question) {
-                        const parts = question.textContent.split('\$');
-                        if (parts.length > 1) {
-                            cost = parseMoney(parts[parts.length - 1]);
-                        }
-                    }
-                }
-                
-                if (cost === 0 && li) {
-                    const cells = li.querySelectorAll('div[class*="cell___"]');
-                    for (const cell of cells) {
-                        const txt = cell.textContent.toLowerCase();
-                        if (txt.includes('cost') && txt.includes('\$')) {
-                            const parts = cell.textContent.split('\$');
-                            if (parts.length > 1) {
-                                cost = parseMoney(parts[parts.length - 1]);
-                                break;
-                            }
-                        }
-                    }
-                }
-                    if (li) {
-                    const inlineStock = li.querySelector('[class*="inlineStock___"]');
-                    if (inlineStock) {
-                        const match = inlineStock.textContent.match(/x([\\d,]+)/);
-                        if (match) {
-                            stock = parseInt(match[1].replace(/,/g, ''));
-                        }
-                    }
-                    
-                    if (stock === 0) {
-                        const cells = li.querySelectorAll('div[class*="cell___"]');
-                        for (const cell of cells) {
-                            const txt = cell.textContent.toLowerCase();
-                            if (txt.includes('stock')) {
-                                const match = cell.textContent.match(/stock\\s*([\\d,]+)/i) || cell.textContent.match(/([\\d,]+)/);
-                                if (match) {
-                                    stock = parseInt(match[1].replace(/,/g, ''));
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                const itemsBar = document.querySelector('[class*="items-"]');
-                if (itemsBar) {
-                    const capMatch = itemsBar.textContent.match(/(\\d+)\\s*\\/\\s*(\\d+)/);
-                    if (capMatch) {
-                        capacityLeft = parseInt(capMatch[2]) - parseInt(capMatch[1]);
-                    }
-                }
-            }
-            
-            let max = 0;
-            let maxAffordable = 999999;
-            if (cost > 0) {
-                maxAffordable = Math.floor(money / cost);
-            }
-            
-            const effectiveStock = stock > 0 ? stock : 999999;
-            const effectiveCapacity = capacityLeft >= 0 ? capacityLeft : 999999;
-            
-            max = Math.min(effectiveStock, effectiveCapacity, maxAffordable);
-            
-            if (limitFromInput > 0) {
-                max = Math.min(limitFromInput, maxAffordable);
-            }
-
-            if (form) {
-                const input = form.querySelector('input.input-money');
-                if (input) {
-                    input.value = max;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            }
-        };
-    });
-
-    // 5. PREVENT KEYBOARD ON BASKET CLICK (Vertical Mode)
-    if (preventBasketKeyboard) {
-      const basketButtons = document.querySelectorAll('button[class*="buyIconButton___"]');
-      basketButtons.forEach(btn => {
-          if (btn.dataset.pdaBlurAdded) return;
-          btn.dataset.pdaBlurAdded = 'true';
-          
-          btn.addEventListener('click', (e) => {
-              [50, 150, 300, 500].forEach(delay => {
-                  setTimeout(() => {
-                      if (document.activeElement && document.activeElement.tagName === 'INPUT') {
-                          document.activeElement.blur();
-                      }
-                  }, delay);
-              });
-          });
-      });
-    }
-  }
-
-  addFillMaxButtons();
-  const observer = new MutationObserver((mutations) => {
-    addFillMaxButtons();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-  ''';
-}
-
-String travelRemovePlaneJS() {
-  return '''
-    var style = document.createElement('style');
-    style.type = 'text/css';
-    style.innerHTML = `
-        .travel-agency-travelling .stage, 
-        .travel-agency-travelling .popup-info, 
-        [class^="airspaceScene___"][class*="outboundFlight___"], 
-        [class^="airspaceScene___"][class*="returnFlight___"], 
-        [class^="randomFact___"], 
-        [class^="randomFactWrapper___"],
-        [class^="delimiter-"] { 
-            display: none !important; 
-        }
-    `;
-    document.head.appendChild(style);
-            
-    // Return to avoid iOS WKErrorDomain
-    123;
-  ''';
-}
-
 String travelReturnHomeJS() {
   return '''
     function goHome() {
       const doc = document;
-      let travelHome = doc.querySelector('.travel-home-header-button');
+      let travelHome = doc.querySelector('.travel-home-header-button') 
+                     || doc.querySelector('a.travel-home');
       
       if (travelHome) {
           travelHome.click();
           setTimeout(function() {
-              let confirmBtn = doc.querySelector('#travel-home-panel button.torn-btn');
+              let confirmBtn = doc.querySelector('#travel-home-panel button.torn-btn')
+                            || doc.querySelector('.travel-back-link button.torn-btn');
               if (confirmBtn) {
                   confirmBtn.click();
               }
@@ -596,65 +186,16 @@ String travelReturnHomeJS() {
   ''';
 }
 
-String highlightCityItemsJS() {
+// show/hide the on-map overlay without touching the city option (no-op if highlight not run)
+String toggleCityItemsHighlightJS({required bool hidden}) {
+  final h = hidden ? 'true' : 'false';
   return '''
-    function addStyle(styleString) {
-        const style = document.createElement('style');
-        style.textContent = styleString;
-        document.head.append(style);
-    }
-      
-    addStyle(`
-      .pdaCityItem {
-        box-sizing: border-box;
-        box-shadow: rgb(195 20 20 / 0%) 0px 0px 20px 10px;
-        display: block !important;
-        width: 40px !important;
-        height: 40px !important;
-        left: -20px !important;
-        top: -20px !important;
-        z-index: 999 !important;
-        padding: 10px 0px;
-        border-width: medium;
-        border-style: dashed;
-        border-color: rgb(1 7 255);
-        border-image: initial;
-        border-radius: 100%;
-        background: rgb(206 202 184 / 77%);
-        transition: width 50ms cubic-bezier(0.65, 0.05, 0.36, 1), height 50ms cubic-bezier(0.65, 0.05, 0.36, 1), left 50ms cubic-bezier(0.65, 0.05, 0.36, 1), top 50ms cubic-bezier(0.65, 0.05, 0.36, 1), padding 50ms cubic-bezier(0.65, 0.05, 0.36, 1), background 50ms 0ms;
-        animation: svelte-1dz9z41-fade-in 500ms ease-out backwards;
-      }
-    `);
-      
-    function highlightItems() {
-      // Find items
-      for(let el of document.querySelectorAll("#map .leaflet-marker-pane *")){
-        let src = el.getAttribute("src");
-        if(src.indexOf("/images/items/") > -1){
-          el.classList.add("pdaCityItem");
-        }
-      }
-    }
-    
-    itemsLoaded().then(() => {
-      highlightItems();
-    });
-    
-    function itemsLoaded() {
-      return new Promise((resolve) => {
-        let checker = setInterval(() => {
-          if (document.querySelector("#map .leaflet-marker-pane *")) {
-          setInterval(() => {
-            resolve(true);
-          }, 300);
-          return clearInterval(checker);
-          }
-        });
-      });
-    } 
-    
-    // Return to avoid iOS WKErrorDomain
-    123;
+    (function() {
+      try {
+        if (window._pdaSetCityHighlightHidden) window._pdaSetCityHighlightHidden($h);
+      } catch (e) {}
+      return $h;
+    })();
   ''';
 }
 
@@ -861,7 +402,15 @@ String addOthersBazaarFillButtonsJS() {
             }
         });
 
-        observer.observe(doc.body, { childList: true, subtree: true });
+        if (doc.body) {
+          observer.observe(doc.body, { childList: true, subtree: true });
+        } else {
+          // Document body is not available, begin observing on document ready
+          console.warn("PDA addOthersBazaarFillButtonsJS: doc.body not available, waiting for DOMContentLoaded");
+          document.addEventListener("DOMContentLoaded", function() {
+            observer.observe(doc.body, { childList: true, subtree: true });
+          });
+        }
 
         const urlHeartbeat = setInterval(() => {
             if (!window.location.href.includes('bazaar.php?userId=')) {
@@ -888,9 +437,10 @@ String addHeightForPullToRefresh() {
 
       // Check if the website content overflows the viewport
       if (document.documentElement.clientHeight >= document.documentElement.scrollHeight) {
-        // If not, add 10px to the body height
-        //console.log("Adding extra height for pull-to-refresh");
-        document.body.style.height = `\${viewportHeight + 20}px`;
+        // If not, give the body a minimum height so pull-to-refresh has room
+        // NOTE (v3.14.0!): must be min-height to work with TORN's drawer 
+        // (otherwise it will pin the body and scroll to the top when the drawer opens)
+        document.body.style.minHeight = `\${viewportHeight + 20}px`;
       }
     })();
   ''';
@@ -961,7 +511,7 @@ String chatHighlightJS({required String highlights}) {
 	}
 	function applyHighlights(el) {
 		// Spread content, in case the msg content has a : in it.
-		const [sender, ...contentArr] = el.firstElementChild.tagName === "DIV" ? el.lastChild.textContent.split(":") : el.textContent.split(":");
+		const [sender, ...contentArr] = el.firstElementChild?.tagName === "DIV" ? el.lastChild.textContent.split(":") : el.textContent.split(":");
 		const content = contentArr.join(":");
 		// Make it easy to silent the errors, so if (when...) something breaks it doesn't spam the console.
 		if (!sender && !window.pda?.silenceChatErrors) console.error("Missing sender in message element.")
@@ -972,18 +522,22 @@ String chatHighlightJS({required String highlights}) {
 
 	waitForChat().then((chat) => {
 		removeHighlights();
-	
+
 		[...chat.querySelectorAll("[class*='chat-box-body__'] [class*='chat-box-message__box__']")].forEach(applyHighlights);
-		new MutationObserver((muts) => {
+		// Re-injections would otherwise stack a new observer on top of the previous ones
+		window.pdaChatObserver?.disconnect();
+		window.pdaChatObserver = new MutationObserver((muts) => {
 			for (const mut of muts) {
 				for (const node of mut.addedNodes) {
-					if (node instanceof HTMLElement && !node.className && node.parentElement?.className.includes("chat-box-body__")) {
+					if (node instanceof HTMLElement && !node.className && (node.parentElement?.getAttribute("class") || "").includes("chat-box-body__")) {
 						applyHighlights(node);
 					}
 				}
 			}
-		}).observe(chat, { childList: true, subtree: true })
-	});
+		});
+		window.pdaChatObserver.observe(chat, { childList: true, subtree: true })
+	// No chat on this page: waitForChat rejects and the promise must not go unhandled
+	}).catch(() => {});
 })();
   ''';
 }
@@ -1232,10 +786,7 @@ String miniProfiles() {
   ''';
 }
 
-String bountiesJS({
-  required int? levelMax,
-  required bool? removeNotAvailable,
-}) {
+String bountiesJS({required int? levelMax, required bool? removeNotAvailable}) {
   return '''
     // Credit to TornTools for implementation logic
     var doc = window.document;
@@ -1438,88 +989,6 @@ String ocNNB({required String members, required int playerID}) {
 		addStyles();
 		waitForOCs().then(handleOCRows).catch(console.trace);
 	})($members, $playerID);
-  ''';
-}
-
-/// As of iOS 18...
-/// iOS does not handle 'dblclick' events reliably, so we implement a custom double-click detection
-String barsDoubleClickRedirect({bool isIOS = false}) {
-  return '''
-    (function() {
-      if (window.pdaBarsListenerAdded) {
-        return;
-      }
-
-      function onEnergyClick() {
-        window.location.href = "https://www.torn.com/gym.php";
-      }
-
-      function onNerveClick() {
-        window.location.href = "https://www.torn.com/crimes.php";
-      }
-
-      function addBarsListener() {
-        const barElements = Array.from(document.querySelectorAll('[class^="bar___"]'));
-        const energyBar = barElements.find((el) =>
-          el.className.includes('energy___') && el.className.includes('bar-')
-        );
-        const nerveBar = barElements.find((el) =>
-          el.className.includes('nerve___') && el.className.includes('bar-')
-        );
-
-        if (!energyBar || !nerveBar) {
-          return false;
-        }
-
-        if ($isIOS) {
-          let energyClickCount = 0;
-          let nerveClickCount = 0;
-          const doubleClickInterval = 1500; // ms window for a double click
-
-          energyBar.addEventListener('click', () => {
-            energyClickCount++;
-            if (energyClickCount === 1) {
-              setTimeout(() => {
-                if (energyClickCount >= 2) {
-                  onEnergyClick();
-                }
-                energyClickCount = 0;
-              }, doubleClickInterval);
-            }
-          });
-
-          nerveBar.addEventListener('click', () => {
-            nerveClickCount++;
-            if (nerveClickCount === 1) {
-              setTimeout(() => {
-                if (nerveClickCount >= 2) {
-                  onNerveClick();
-                }
-                nerveClickCount = 0;
-              }, doubleClickInterval);
-            }
-          });
-        } else {
-          energyBar.addEventListener('dblclick', onEnergyClick);
-          nerveBar.addEventListener('dblclick', onNerveClick);
-        }
-
-        window.pdaBarsListenerAdded = true;
-        return true;
-      }
-
-      let pass = 0;
-      const waitForBarsAndRun = setInterval(() => {
-        if (addBarsListener()) {
-          return clearInterval(waitForBarsAndRun);
-        }
-
-        pass++;
-        if (pass > 20) {
-          clearInterval(waitForBarsAndRun);
-        }
-      }, 300);
-    })();
   ''';
 }
 

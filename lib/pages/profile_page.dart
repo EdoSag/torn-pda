@@ -1,22 +1,24 @@
+import 'package:torn_pda/utils/live_activities/racing_live_activity_parser.dart';
+import 'package:torn_pda/widgets/profile/shortcut_paged_grid.dart';
+import 'package:torn_pda/widgets/profile/shortcut_icon_picker.dart';
 // Dart imports:
 import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 
 // Flutter imports:
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:android_intent_plus/android_intent.dart';
 // Package imports:
 import 'package:bot_toast/bot_toast.dart';
 import 'package:expandable/expandable.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
@@ -30,22 +32,18 @@ import 'package:torn_pda/main.dart';
 import 'package:torn_pda/models/api_v2/torn_v2.swagger.dart';
 // Project imports:
 import 'package:torn_pda/models/chaining/chain_model.dart';
+import 'package:torn_pda/models/drawer_section.dart';
 import 'package:torn_pda/models/chaining/ranked_wars_model.dart';
-import 'package:torn_pda/models/company/employees_model.dart';
 import 'package:torn_pda/models/education_model.dart';
-import 'package:torn_pda/models/faction/faction_crimes_model.dart';
 import 'package:torn_pda/models/profile/external/torn_stats_chart.dart';
 import 'package:torn_pda/models/profile/own_profile_misc.dart';
 import 'package:torn_pda/models/profile/own_profile_model.dart';
 import 'package:torn_pda/models/profile/shortcuts_model.dart';
-import 'package:torn_pda/models/chaining/bars_model.dart' as bars_model;
 import 'package:torn_pda/models/profile/user_v2_selections/property_v2_model.dart';
 import 'package:torn_pda/pages/profile/profile_options_page.dart';
 import 'package:torn_pda/pages/profile/shortcuts_page.dart';
 import 'package:torn_pda/providers/api/api_utils.dart';
-import 'package:torn_pda/providers/api/api_v1_calls.dart';
-import 'package:torn_pda/providers/api/api_v2_calls.dart';
-import 'package:torn_pda/providers/chain_status_controller.dart';
+import 'package:torn_pda/providers/profile_api_calls_controller.dart';
 import 'package:torn_pda/providers/settings_provider.dart';
 import 'package:torn_pda/providers/shortcuts_provider.dart';
 import 'package:torn_pda/providers/theme_provider.dart';
@@ -76,6 +74,8 @@ import 'package:torn_pda/widgets/revive/nuke_revive_button.dart';
 import 'package:torn_pda/widgets/revive/uhc_revive_button.dart';
 import 'package:torn_pda/widgets/revive/wolverines_revive_button.dart';
 import 'package:torn_pda/widgets/revive/wtf_revive_button.dart';
+import 'package:torn_pda/widgets/revive/combat_ready_revive_button.dart';
+import 'package:torn_pda/widgets/revive/asclepius_revive_button.dart';
 import 'package:torn_pda/widgets/tct_clock.dart';
 import 'package:torn_pda/widgets/travel/travel_return_widget.dart';
 import 'package:torn_pda/widgets/pda_browser_icon.dart';
@@ -91,16 +91,18 @@ enum ProfileNotification {
   drugs,
   medical,
   education,
+  virus,
   booster,
   rankedWar,
   raceStart,
 }
 
-enum NotificationType {
-  notification,
-  alarm,
-  timer,
-}
+enum NotificationType { notification, alarm, timer }
+
+/// DEBUG: schedules profile notifications
+/// Hot restart + setup alarm
+bool debugQuickProfileAlerts = true;
+int debugQuickProfileLeadSeconds = 5;
 
 extension ProfileNotificationExtension on ProfileNotification {
   String? get string {
@@ -119,6 +121,8 @@ extension ProfileNotificationExtension on ProfileNotification {
         return 'medical';
       case ProfileNotification.booster:
         return 'booster';
+      case ProfileNotification.virus:
+        return 'virus';
       default:
         return null;
     }
@@ -126,36 +130,30 @@ extension ProfileNotificationExtension on ProfileNotification {
 }
 
 class ProfilePage extends StatefulWidget {
-  final Function callBackSection;
+  final Function(DrawerSection) callBackSection;
   final Function disableTravelSection;
 
-  const ProfilePage({
-    required this.callBackSection,
-    required this.disableTravelSection,
-  });
+  const ProfilePage({required this.callBackSection, required this.disableTravelSection});
 
   @override
   ProfilePageState createState() => ProfilePageState();
 }
 
 class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
-  Future? _apiFetched;
-  bool _apiGoodData = false;
-  ApiError? _apiError = ApiError();
-  int _apiRetries = 0;
+  // API state in ProfileApiCallsController, exposed getters are here
+  final ProfileApiCallsController _profileApi = Get.find<ProfileApiCallsController>();
+  Future? get _apiFetched => _profileApi.apiFetched;
+  bool get _apiGoodData => _profileApi.apiGoodData;
+  ApiError? get _apiError => _profileApi.apiError;
+  OwnProfileExtended? get _user => _profileApi.user;
+  List<Event> get _events => _profileApi.events;
+  DateTime get _serverTime => _profileApi.serverTime;
 
-  OwnProfileExtended? _user;
-  List<Event> _events = <Event>[];
-
-  late DateTime _serverTime;
-
-  Timer? _tickerCallApi;
   late Stream _browserHasClosed;
   late StreamSubscription _browserHasClosedSubscription;
 
   SettingsProvider? _settingsProvider;
   ThemeProvider? _themeProvider;
-  final _chainController = Get.find<ChainStatusController>();
   late ShortcutsProvider _shortcutsProv;
   late WebViewProvider _webViewProvider;
   final UserController _u = Get.find<UserController>();
@@ -172,6 +170,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   DateTime? _drugsNotificationTime;
   DateTime? _medicalNotificationTime;
   DateTime? _educationNotificationTime;
+  DateTime? _virusNotificationTime;
   DateTime? _boosterNotificationTime;
   late DateTime _hospitalReleaseTime;
   late DateTime _jailReleaseTime;
@@ -198,6 +197,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   bool _drugsNotificationsPending = false;
   bool _medicalNotificationsPending = false;
   bool _educationNotificationsPending = false;
+  bool _virusNotificationsPending = false;
   bool _boosterNotificationsPending = false;
   bool _hospitalNotificationsPending = false;
   bool _jailNotificationsPending = false;
@@ -214,6 +214,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   NotificationType _drugsNotificationType = NotificationType.notification;
   NotificationType _medicalNotificationType = NotificationType.notification;
   NotificationType _educationNotificationType = NotificationType.notification;
+  NotificationType _virusNotificationType = NotificationType.notification;
   NotificationType _boosterNotificationType = NotificationType.notification;
   NotificationType _hospitalNotificationType = NotificationType.notification;
   NotificationType _jailNotificationType = NotificationType.notification;
@@ -233,6 +234,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   IconData? _drugsNotificationIcon;
   IconData? _medicalNotificationIcon;
   IconData? _educationNotificationIcon;
+  IconData? _virusNotificationIcon;
   IconData? _boosterNotificationIcon;
   IconData? _hospitalNotificationIcon;
   IconData? _jailNotificationIcon;
@@ -242,14 +244,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   late bool _alarmSound;
   late bool _alarmVibration;
 
-  bool _miscApiFetchedOnce = false;
-  OwnProfileMisc? _miscModel;
-  TornEducationModel? _tornEducationModel;
-  UserItemMarketResponse? _marketItemsV2;
-
-  // API call rate limiting
-  DateTime _lastFetchApiTime = DateTime.now();
-  DateTime _lastMiscUpdateTime = DateTime.now();
+  bool get _miscApiFetchedOnce => _profileApi.miscApiFetchedOnce;
+  OwnProfileMisc? get _miscModel => _profileApi.miscModel;
+  TornEducationModel? get _tornEducationModel => _profileApi.tornEducationModel;
+  UserItemMarketResponse? get _marketItemsV2 => _profileApi.marketItemsV2;
+  UserVirus? get _virusModel => _profileApi.virusModel;
 
   var _rentedProperties = 0;
   Widget _rentedPropertiesWidget = const SizedBox.shrink();
@@ -259,23 +258,23 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   // ######## //
   /// OC V2 ///
   // ######## //
-  UserOrganizedCrimeResponse? _oc2Model;
+  UserOrganizedCrimeResponse? get _oc2Model => _profileApi.oc2Model;
 
   // ######## //
   /// OC V1 ///
   // ######## //
   // We will first try to get the full crimes if we have AA access, in which case
   // we consider it as Complex. Otherwise, with events, it will be Simple.
-  DateTime _ocTime = DateTime.now();
+  DateTime get _ocTime => _profileApi.ocTime;
   // Simple OC
-  bool _ocSimpleExists = false;
-  String _ocSimpleStringFinal = "";
-  bool _ocSimpleReady = false;
+  bool get _ocSimpleExists => _profileApi.ocSimpleExists;
+  String get _ocSimpleStringFinal => _profileApi.ocSimpleStringFinal;
+  bool get _ocSimpleReady => _profileApi.ocSimpleReady;
   // Complex OC
-  String _ocFinalStringLong = "";
-  String _ocFinalStringShort = "";
-  int _ocComplexPeopleNotReady = 0;
-  bool _ocComplexReady = false;
+  String get _ocFinalStringLong => _profileApi.ocFinalStringLong;
+  String get _ocFinalStringShort => _profileApi.ocFinalStringShort;
+  int get _ocComplexPeopleNotReady => _profileApi.ocComplexPeopleNotReady;
+  bool get _ocComplexReady => _profileApi.ocComplexReady;
   // ## END OC ## //
 
   bool _warnAboutChains = false;
@@ -283,8 +282,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   bool _showHeaderIcons = false;
   bool _showShortcutEditIcon = true;
   bool _dedicatedTravelCard = false;
+  bool _hideProfileFab = false;
 
-  late ChainModel _chainModel;
+  ChainModel get _chainModel => _profileApi.chainModel;
 
   final _eventsExpController = ExpandableController();
   final _messagesExpController = ExpandableController();
@@ -317,14 +317,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   var _sharedEffTotal = "";
   var _sharedJobPoints = "";
 
-  StatsChartTornStats? _statsChartModel;
-  bool _statsChartIsCached = false;
-  String? _statsChartError;
-  Future? _statsChartDataFetched;
+  StatsChartTornStats? get _statsChartModel => _profileApi.statsChartModel;
+  bool get _statsChartIsCached => _profileApi.statsChartIsCached;
+  String? get _statsChartError => _profileApi.statsChartError;
+  Future? get _statsChartDataFetched => _profileApi.statsChartDataFetched;
 
-  RankedWar? _factionRankedWar;
+  RankedWar? get _factionRankedWar => _profileApi.factionRankedWar;
 
-  int? _companyAddiction;
+  int? get _companyAddiction => _profileApi.companyAddiction;
 
   // Showcases
   final GlobalKey _showcaseProfileBars = GlobalKey();
@@ -338,19 +338,29 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
     _retrievePendingNotifications();
 
-    _loadPreferences().whenComplete(() {
-      _apiFetched = _fetchApi();
-    });
+    _profileApi.activate(
+      settingsProvider: context.read<SettingsProvider>(),
+      webViewProvider: context.read<WebViewProvider>(),
+      hooks: ProfileApiPageHooks(
+        onStateUpdated: () {
+          if (mounted) setState(() {});
+        },
+        onUserFetched: _onUserFetched,
+        onMiscFetched: (misc, forced) => _checkProperties(misc, forced),
+        onFetchCycleEnd: _retrievePendingNotifications,
+      ),
+    );
 
-    // Initialize periodic API refresh
-    _resetApiTimer();
+    _loadPreferences().whenComplete(() {
+      _profileApi.startInitialFetch(messagesShowNumber: _messagesShowNumber!, eventsShowNumber: _eventsShowNumber!);
+    });
 
     // Join a stream that will notify when the browser closes (a browser initiated in Profile or elsewhere)
     // So that we can 1) refresh the API, 2) start the API timer again
     _browserHasClosed = context.read<WebViewProvider>().browserHasClosedStream.stream;
     _browserHasClosedSubscription = _browserHasClosed.listen((event) {
       log("Browser has closed in Profile, resuming API calls!");
-      _resetApiTimer(initCall: true);
+      _profileApi.resetApiTimer(initCall: true, trigger: "browser-closed");
     });
 
     analytics?.logScreenView(screenName: 'profile');
@@ -359,45 +369,23 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     routeName = "profile`";
   }
 
-  /// Restarts the API timer with 1-second checks
-  /// [initCall] forces an immediate refresh (e.g., user pull-to-refresh)
-  void _resetApiTimer({bool initCall = false}) {
-    if (initCall && (!_webViewProvider.browserShowInForeground || _webViewProvider.webViewSplitActive)) {
-      _apiRefreshPeriodic(forceMisc: false);
+  void _onUserFetched(OwnProfileExtended user) {
+    // If max values have decreased or were never initialized
+    if (_customEnergyTrigger! > user.energy!.maximum! || _customEnergyTrigger == 0) {
+      _customEnergyTrigger = user.energy!.maximum;
+      Prefs().setEnergyNotificationValue(_customEnergyTrigger!);
+    }
+    if (_customNerveTrigger! > user.nerve!.maximum! || _customNerveTrigger == 0) {
+      _customNerveTrigger = user.nerve!.maximum;
+      Prefs().setNerveNotificationValue(_customNerveTrigger!);
     }
 
-    _tickerCallApi?.cancel();
-    _tickerCallApi = Timer.periodic(const Duration(seconds: 1), (Timer t) {
-      if (!_webViewProvider.browserShowInForeground || _webViewProvider.webViewSplitActive) {
-        _apiRefreshPeriodic();
-      }
-    });
-  }
-
-  void _apiRefreshPeriodic({bool forceMisc = false}) {
-    // Fast calls: only if data is older than 20 seconds
-    final secondsSinceLastFetch = DateTime.now().difference(_lastFetchApiTime).inSeconds;
-    if (secondsSinceLastFetch >= 20) {
-      _fetchApi();
-      _refreshEvents();
-      _lastFetchApiTime = DateTime.now();
-    }
-
-    // Misc calls: only if data is older than 60 seconds (or forced)
-    final secondsSinceLastMisc = DateTime.now().difference(_lastMiscUpdateTime).inSeconds;
-    if (secondsSinceLastMisc >= 60 || forceMisc) {
-      _getMiscCardInfo(forcedUpdate: forceMisc);
-      _getStatsChart();
-      _getRankedWars();
-      _getCompanyAddiction();
-      _lastMiscUpdateTime = DateTime.now();
-    }
+    _checkIfNotificationsAreCurrent();
   }
 
   @override
   void dispose() {
-    _chainController.statusUpdateSource = "provider";
-    _tickerCallApi?.cancel();
+    _profileApi.deactivate();
     _browserHasClosedSubscription.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -408,9 +396,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (Platform.isWindows) return;
 
     if (state == AppLifecycleState.resumed) {
-      _resetApiTimer(initCall: false);
+      _profileApi.resetApiTimer(initCall: false, trigger: "lifecycle-resume");
     } else if (state == AppLifecycleState.paused) {
-      _tickerCallApi?.cancel();
+      _profileApi.pauseTicker();
     }
   }
 
@@ -422,23 +410,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     _webViewProvider = Provider.of<WebViewProvider>(context);
 
     return ShowCaseWidget(
-      builder: (_) {
-        _launchShowCases(_);
+      builder: (ctx) {
+        _launchShowCases(ctx);
         return Scaffold(
           backgroundColor: _themeProvider!.canvas,
           drawer: !_webViewProvider.splitScreenAndBrowserLeft() ? const Drawer() : null,
           appBar: _settingsProvider!.appBarTop ? buildAppBar() : null,
           bottomNavigationBar: !_settingsProvider!.appBarTop
-              ? SizedBox(
-                  height: AppBar().preferredSize.height,
-                  child: buildAppBar(),
-                )
+              ? SizedBox(height: AppBar().preferredSize.height, child: buildAppBar())
               : null,
-          floatingActionButton: Stack(
-            children: [
-              buildSpeedDial(),
-            ],
-          ),
+          floatingActionButton: _hideProfileFab ? null : Stack(children: [buildSpeedDial()]),
           body: Container(
             color: _themeProvider!.canvas,
             child: FutureBuilder(
@@ -448,16 +429,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   if (_apiGoodData) {
                     return RefreshIndicator(
                       onRefresh: () async {
-                        _resetApiTimer(initCall: true);
+                        _profileApi.resetApiTimer(initCall: true, trigger: "pull-refresh");
                         await Future.delayed(const Duration(seconds: 1));
                       },
                       child: SingleChildScrollView(
                         child: Column(
                           children: <Widget>[
                             _headerIcons(),
-                            Column(
-                              children: _returnSections(),
-                            ),
+                            Column(children: _returnSections()),
                             const SizedBox(height: 70),
                           ],
                         ),
@@ -466,7 +445,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   } else {
                     return RefreshIndicator(
                       onRefresh: () async {
-                        _fetchApi();
+                        _profileApi.fetchApi(trigger: "pull-refresh-error");
                         await Future.delayed(const Duration(seconds: 1));
                       },
                       child: SingleChildScrollView(
@@ -476,10 +455,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: <Widget>[
                             const SizedBox(height: 50),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              child: _shortcutsCarrousel(),
-                            ),
+                            Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: _shortcutsCarrousel()),
                             const SizedBox(height: 50),
                             Text(
                               'OOPS!',
@@ -493,10 +469,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
                               child: Column(
                                 children: [
-                                  Text(
-                                    'There was an error: ${_apiError!.errorReason}',
-                                    textAlign: TextAlign.center,
-                                  ),
+                                  Text('There was an error: ${_apiError!.errorReason}', textAlign: TextAlign.center),
                                   if (_apiError!.pdaErrorDetails.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 20),
@@ -507,18 +480,13 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                               children: [
                                                 const Text(
                                                   'Error details:',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                  ),
+                                                  style: TextStyle(fontSize: 12),
                                                   textAlign: TextAlign.center,
                                                 ),
                                                 const SizedBox(height: 5),
                                                 Text(
                                                   _apiError!.pdaErrorDetails,
-                                                  style: const TextStyle(
-                                                    fontStyle: FontStyle.italic,
-                                                    fontSize: 10,
-                                                  ),
+                                                  style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 10),
                                                   textAlign: TextAlign.center,
                                                 ),
                                               ],
@@ -563,10 +531,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       children: <Widget>[
                         Text('Fetching data...'),
                         SizedBox(height: 30),
-                        Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(),
-                        ),
+                        Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator()),
                       ],
                     ),
                   );
@@ -579,7 +544,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
-  void _launchShowCases(BuildContext _) {
+  void _launchShowCases(BuildContext ctx) {
     Future.delayed(const Duration(seconds: 1), () async {
       final List showCases = <GlobalKey<State<StatefulWidget>>>[];
       // Show tab bar showcases
@@ -599,7 +564,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       }
 
       if (showCases.isNotEmpty) {
-        ShowCaseWidget.of(_).startShowCase(showCases as List<GlobalKey<State<StatefulWidget>>>);
+        ShowCaseWidget.of(ctx).startShowCase(showCases as List<GlobalKey<State<StatefulWidget>>>);
       }
     });
   }
@@ -624,8 +589,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       Color textColor = Colors.white;
                       IconData statusIcon;
 
-                      final DateTime lastActionTime =
-                          DateTime.fromMillisecondsSinceEpoch(_user!.lastAction!.timestamp! * 1000);
+                      final DateTime lastActionTime = DateTime.fromMillisecondsSinceEpoch(
+                        _user!.lastAction!.timestamp! * 1000,
+                      );
 
                       final timeFormatter = TimeFormatter(
                         inputTime: lastActionTime,
@@ -681,17 +647,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                             shape: BoxShape.circle,
                                             border: Border.all(color: Colors.white, width: 2),
                                           ),
-                                          child: Icon(
-                                            statusIcon,
-                                            color: textColor,
-                                            size: 16,
-                                          ),
+                                          child: Icon(statusIcon, color: textColor, size: 16),
                                         )
-                                      : Icon(
-                                          statusIcon,
-                                          color: textColor,
-                                          size: 20,
-                                        ),
+                                      : Icon(statusIcon, color: textColor, size: 20),
                                   const SizedBox(width: 12),
                                   Flexible(
                                     child: Text(
@@ -738,11 +696,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(
-                                    Icons.content_copy,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
+                                  const Icon(Icons.content_copy, color: Colors.white, size: 20),
                                   const SizedBox(width: 12),
                                   Text(
                                     "ID ${_user!.playerId} copied!",
@@ -815,7 +769,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             Showcase(
               key: _showcasePdaBrowserButton,
               title: 'Direct Torn access!',
-              description: '\nUse this PDA button in any section to quickly access Torn.\n\n'
+              description:
+                  '\nUse this PDA button in any section to quickly access Torn.\n\n'
                   'By using this icon, you will immediately resume your Torn browser experience, exactly as you '
                   'left it, with no new tabs reloading.\n\n'
                   'Make sure to visit the Settings and Tips section to learn how you can also configure '
@@ -839,7 +794,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             child: Showcase(
               key: _showcaseProfileClock,
               title: 'There is a lot to explore!',
-              description: '\nAlmost anything in Torn PDA can be interacted with!\n\n'
+              description:
+                  '\nAlmost anything in Torn PDA can be interacted with!\n\n'
                   "Try for yourself, and don't forget to visit the Tips section for more "
                   'information!',
               showArrow: false,
@@ -870,10 +826,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         else
           const SizedBox.shrink(),
         IconButton(
-          icon: Icon(
-            Icons.settings,
-            color: _themeProvider!.buttonText,
-          ),
+          icon: Icon(Icons.settings, color: _themeProvider!.buttonText),
           onPressed: () async {
             await Navigator.push(
               context,
@@ -893,6 +846,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             final showShortcutEditIcon = await Prefs().getShowShortcutEditIcon();
             final dedTravel = await Prefs().getDedicatedTravelCard();
             final disableTravel = await Prefs().getDisableTravelSection();
+            final hideProfileFab = await Prefs().getHideProfileFab();
             final expandEvents = await Prefs().getExpandEvents();
             final eventsNumber = await Prefs().getEventsShowNumber();
             final expandMessages = await Prefs().getExpandMessages();
@@ -919,6 +873,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               _showHeaderIcons = headerIcons;
               _showShortcutEditIcon = showShortcutEditIcon;
               _dedicatedTravelCard = dedTravel;
+              _hideProfileFab = hideProfileFab;
               _eventsExpController.expanded = expandEvents;
               _messagesShowNumber = messagesNumber;
               _eventsShowNumber = eventsNumber;
@@ -928,21 +883,23 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               _userSectionOrder = sectionList;
             });
 
+            _profileApi.setShowNumbers(messagesNumber, eventsNumber);
+
             // If we reactivated faction crimes, they might take up to a minute
             // to appear unless we call them directly
             if (_settingsProvider!.oCrimesEnabled) {
               if (_settingsProvider!.playerInOCv2) {
-                _getFactionCrimesV2();
+                _profileApi.getFactionCrimesV2(trigger: "options-return");
               } else {
-                _getFactionCrimesV1();
+                _profileApi.getFactionCrimesV1(trigger: "options-return");
               }
             }
 
             if (_settingsProvider!.tornStatsChartDateTime == 0) {
-              _getStatsChart();
+              _profileApi.getStatsChart(trigger: "options-return");
             }
           },
-        )
+        ),
       ],
     );
   }
@@ -955,21 +912,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           if (_showHeaderWallet)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _cashWallet(dense: true),
-                ],
-              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [_cashWallet(dense: true)]),
             ),
           if (_showHeaderIcons)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              child: StatusIconsWrap(
-                user: _user,
-                openBrowser: _launchBrowser,
-                settingsProvider: _settingsProvider,
-              ),
+              child: StatusIconsWrap(user: _user, openBrowser: _launchBrowser, settingsProvider: _settingsProvider),
             ),
         ],
       ),
@@ -978,11 +926,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Widget _shortcutsCarrousel() {
     void openShortcutsEditor() {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (BuildContext context) => ShortcutsPage(),
-        ),
-      );
+      Navigator.of(context).push(MaterialPageRoute(builder: (BuildContext context) => ShortcutsPage()));
     }
 
     // Returns Main individual tile
@@ -999,7 +943,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 child: Image.asset(
                   thisShortcut.iconUrl!,
                   width: 16,
-                  color: _themeProvider!.mainText,
+                  color: isFullColorShortcutIcon(thisShortcut.iconUrl)
+                      ? null
+                      : (thisShortcut.iconColor ?? _themeProvider!.mainText),
                 ),
               ),
               const SizedBox(height: 3),
@@ -1030,7 +976,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             child: Image.asset(
               thisShortcut.iconUrl!,
               width: 16,
-              color: _themeProvider!.mainText,
+              color: isFullColorShortcutIcon(thisShortcut.iconUrl)
+                  ? null
+                  : (thisShortcut.iconColor ?? _themeProvider!.mainText),
             ),
           ),
         );
@@ -1107,21 +1055,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         padding: const EdgeInsets.all(8),
         child: SizedBox(
           width: iconOnly ? 32 : 55,
-          child: Center(
-            child: Icon(
-              Icons.switch_access_shortcut_outlined,
-              size: 18,
-              color: _themeProvider!.mainText,
-            ),
-          ),
+          child: Center(child: Icon(Icons.switch_access_shortcut_outlined, size: 18, color: _themeProvider!.mainText)),
         ),
       );
 
-      final button = InkWell(
-        onTap: openShortcutsEditor,
-        borderRadius: BorderRadius.circular(4.0),
-        child: card,
-      );
+      final button = InkWell(onTap: openShortcutsEditor, borderRadius: BorderRadius.circular(4.0), child: card);
 
       final semantics = Semantics(
         label: 'Open shortcuts menu',
@@ -1136,7 +1074,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       return semantics;
     }
 
-    // Main menu, returns either slidable list or wrap (grid)
+    // Main menu, returns either slidable list, wrap (grid), or paged grid carousel
     Widget shortcutMenu() {
       if (_shortcutsProv.shortcutMenu == "carousel") {
         return ListView.builder(
@@ -1153,6 +1091,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               child: ExcludeSemantics(child: shortcutTile(thisShortcut)),
             );
           },
+        );
+      } else if (_shortcutsProv.shortcutMenu == "gridcarousel") {
+        return ShortcutPagedGrid(
+          shortcuts: _shortcutsProv.activeShortcuts,
+          showEditIcon: _showShortcutEditIcon,
+          shortcutTile: _shortcutsProv.shortcutTile,
+          shortcutTileBuilder: (s) => shortcutTile(s),
+          editTileBuilder: ({required width, required height}) => editShortcutTile(width: width, height: height),
         );
       } else {
         final wrapItems = <Widget>[];
@@ -1207,19 +1153,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         children: [
           Text(
             'No shortcuts configured, add some!',
-            style: TextStyle(
-              color: messageColor,
-              fontStyle: FontStyle.italic,
-              fontSize: 13,
-            ),
+            style: TextStyle(color: messageColor, fontStyle: FontStyle.italic, fontSize: 13),
           ),
           Text(
             _showShortcutEditIcon ? 'Tap the icon to configure' : 'Use the profile options to configure them',
-            style: TextStyle(
-              color: messageColor,
-              fontStyle: FontStyle.italic,
-              fontSize: 10,
-            ),
+            style: TextStyle(color: messageColor, fontStyle: FontStyle.italic, fontSize: 10),
           ),
         ],
       );
@@ -1248,13 +1186,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
     }
 
+    // Grid carousel and grid manage their own height; carousel needs a fixed SizedBox
+    final bool needsFixedHeight = _shortcutsProv.shortcutMenu == "carousel";
     return SizedBox(
-      // We only need a SizedBox height for the listView, the wrap will expand
-      height: _shortcutsProv.shortcutMenu == "grid"
-          ? null
-          : _shortcutsProv.shortcutTile == 'both'
-              ? 60
-              : 40,
+      height: needsFixedHeight ? (_shortcutsProv.shortcutTile == 'both' ? 60 : 40) : null,
       child: _shortcutsProv.activeShortcuts.isEmpty ? emptyShortcutsState() : shortcutMenu(),
     );
   }
@@ -1311,14 +1246,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               ),
               onTap: () {
                 _launchBrowser(
-                  url: 'https://www.torn.com/profiles.php?'
+                  url:
+                      'https://www.torn.com/profiles.php?'
                       'XID=$causingId',
                   shortTap: true,
                 );
               },
               onLongPress: () {
                 _launchBrowser(
-                  url: 'https://www.torn.com/profiles.php?'
+                  url:
+                      'https://www.torn.com/profiles.php?'
                       'XID=$causingId',
                   shortTap: false,
                 );
@@ -1332,13 +1269,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             padding: const EdgeInsets.only(top: 8),
             child: Row(
               children: <Widget>[
-                const SizedBox(
-                  width: 60,
-                  child: Text('Details: '),
-                ),
-                Flexible(
-                  child: detailsWidget,
-                ),
+                const SizedBox(width: 60, child: Text('Details: ')),
+                Flexible(child: detailsWidget),
               ],
             ),
           );
@@ -1396,8 +1328,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       color: _user!.status!.color! == 'green'
                           ? Colors.green
                           : _user!.status!.color! == "red"
-                              ? Colors.red
-                              : Colors.blue,
+                          ? Colors.red
+                          : Colors.blue,
                       blurRadius: 4.0,
                       spreadRadius: 0.5,
                     ),
@@ -1422,13 +1354,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'STATUS',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        const Text('STATUS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                         if (_factionRankedWar != null && _settingsProvider!.rankedWarsInProfile)
                           Row(
                             children: [
@@ -1473,10 +1399,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               children: <Widget>[
                                 Row(
                                   children: [
-                                    const SizedBox(
-                                      width: 60,
-                                      child: Text('Status: '),
-                                    ),
+                                    const SizedBox(width: 60, child: Text('Status: ')),
                                     Text(_user!.status!.state!),
                                     stateBall(),
                                   ],
@@ -1499,10 +1422,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                   children: <Widget>[
                                     Row(
                                       children: [
-                                        const SizedBox(
-                                          width: 60,
-                                          child: Text('Status: '),
-                                        ),
+                                        const SizedBox(width: 60, child: Text('Status: ')),
                                         Text(_user!.status!.state!),
                                         stateBall(),
                                       ],
@@ -1536,10 +1456,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           launchBrowser: _launchBrowser,
                         ),
                         if (_marketItemsV2?.itemmarket != null && _marketItemsV2!.itemmarket.isNotEmpty)
-                          MarketStatusCard(
-                            marketModel: _marketItemsV2!,
-                            launchBrowser: _launchBrowser,
-                          ),
+                          MarketStatusCard(marketModel: _marketItemsV2!, launchBrowser: _launchBrowser),
                         if (!_dedicatedTravelCard) _travelWidget(),
                         descriptionWidget(),
                         if (_user!.status!.state == 'Hospital' && _w.nukeReviveActive)
@@ -1598,6 +1515,26 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           Padding(
                             padding: const EdgeInsets.only(left: 13, top: 10),
                             child: WolverinesReviveButton(
+                              themeProvider: _themeProvider,
+                              user: _user,
+                              webViewProvider: _webViewProvider,
+                              settingsProvider: _settingsProvider,
+                            ),
+                          ),
+                        if (_user!.status!.state == 'Hospital' && _w.combatReadyReviveActive)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 13, top: 10),
+                            child: CombatReadyReviveButton(
+                              themeProvider: _themeProvider,
+                              user: _user,
+                              webViewProvider: _webViewProvider,
+                              settingsProvider: _settingsProvider,
+                            ),
+                          ),
+                        if (_user!.status!.state == 'Hospital' && _w.asclepiusReviveActive)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 13, top: 10),
+                            child: AsclepiusReviveButton(
                               themeProvider: _themeProvider,
                               user: _user,
                               webViewProvider: _webViewProvider,
@@ -1676,10 +1613,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         isRTL: _user!.travel!.destination == "Torn" ? true : false,
                         center: Text(
                           diff,
-                          style: const TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                         ),
                         widgetIndicator: Padding(
                           padding: _user!.travel!.destination == "Torn"
@@ -1690,15 +1624,15 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                             opacity: percentage < 0.2 || percentage > 0.7 ? 1 : 0.3,
                             child: _user!.travel!.destination == "Torn"
                                 ? isChristmasPeriod()
-                                    ? Transform(
-                                        alignment: Alignment.center,
-                                        transform: Matrix4.identity()..scale(-1.0, 1.0),
-                                        child: Icon(FontAwesomeIcons.sleigh, color: Colors.blue[900], size: 22),
-                                      )
-                                    : Image.asset('images/icons/plane_left.png', color: Colors.blue[900], height: 22)
+                                      ? Transform(
+                                          alignment: Alignment.center,
+                                          transform: Matrix4.identity()..scaleByDouble(-1.0, 1.0, -1.0, 1.0),
+                                          child: FaIcon(FontAwesomeIcons.sleigh, color: Colors.blue[900], size: 22),
+                                        )
+                                      : Image.asset('images/icons/plane_left.png', color: Colors.blue[900], height: 22)
                                 : isChristmasPeriod()
-                                    ? Icon(FontAwesomeIcons.sleigh, color: Colors.blue[900], size: 22)
-                                    : Image.asset('images/icons/plane_right.png', color: Colors.blue[900], height: 22),
+                                ? FaIcon(FontAwesomeIcons.sleigh, color: Colors.blue[900], size: 22)
+                                : Image.asset('images/icons/plane_right.png', color: Colors.blue[900], height: 22),
                           ),
                         ),
                         animateFromLastPercent: true,
@@ -1726,9 +1660,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               children: [
                 Row(
                   children: <Widget>[
-                    Flexible(
-                      child: Text('Arriving in ${_user!.travel!.destination} at $formattedTime'),
-                    ),
+                    Flexible(child: Text('Arriving in ${_user!.travel!.destination} at $formattedTime')),
                   ],
                 ),
                 TravelReturnWidget(
@@ -1757,13 +1689,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 55),
-            child: Text(
-              "REPATRIATED",
-              style: TextStyle(
-                fontSize: 11,
-                color: _themeProvider!.getTextColor(Colors.red),
-              ),
-            ),
+            child: Text("REPATRIATED", style: TextStyle(fontSize: 11, color: _themeProvider!.getTextColor(Colors.red))),
           ),
           _travelWidget(repatriated: true),
         ],
@@ -1779,10 +1705,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 style: ElevatedButton.styleFrom(
                   elevation: 2,
                   backgroundColor: _themeProvider!.cardColor,
-                  side: const BorderSide(
-                    width: 2.0,
-                    color: Colors.blueGrey,
-                  ),
+                  side: const BorderSide(width: 2.0, color: Colors.blueGrey),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1792,19 +1715,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       const SizedBox(width: 6),
                       Column(
                         children: [
-                          Text(
-                            "VISIT",
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: _themeProvider!.mainText,
-                            ),
-                          ),
+                          Text("VISIT", style: TextStyle(fontSize: 8, color: _themeProvider!.mainText)),
                           Text(
                             _user!.travel!.destination!.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: _themeProvider!.mainText,
-                            ),
+                            style: TextStyle(fontSize: 8, color: _themeProvider!.mainText),
                           ),
                         ],
                       ),
@@ -1840,13 +1754,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         if (!_ocSimpleExists) {
           ocStatus = Padding(
             padding: const EdgeInsets.only(top: 5),
-            child: Text(
-              _ocFinalStringShort,
-              style: TextStyle(
-                color: Colors.orange[700],
-                fontSize: 12,
-              ),
-            ),
+            child: Text(_ocFinalStringShort, style: TextStyle(color: Colors.orange[700], fontSize: 12)),
           );
         } else if (_ocSimpleExists) {
           ocStatus = Row(
@@ -1854,30 +1762,18 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               Flexible(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 5),
-                  child: Text(
-                    _ocSimpleStringFinal,
-                    style: TextStyle(
-                      color: Colors.orange[700],
-                      fontSize: 12,
-                    ),
-                  ),
+                  child: Text(_ocSimpleStringFinal, style: TextStyle(color: Colors.orange[700], fontSize: 12)),
                 ),
               ),
               GestureDetector(
-                child: Icon(
-                  MdiIcons.closeCircleOutline,
-                  size: 16,
-                  color: Colors.orange[800],
-                ),
+                child: Icon(MdiIcons.closeCircleOutline, size: 16, color: Colors.orange[800]),
                 onTap: () {
                   showDialog(
                     useRootNavigator: false,
                     context: context,
                     barrierDismissible: true,
                     builder: (BuildContext context) {
-                      return DisregardCrimeDialog(
-                        disregardCallback: _disregardCrimeCallback,
-                      );
+                      return DisregardCrimeDialog(disregardCallback: _disregardCrimeCallback);
                     },
                   );
                 },
@@ -1896,40 +1792,21 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 style: ElevatedButton.styleFrom(
                   elevation: 2,
                   backgroundColor: _themeProvider!.cardColor,
-                  side: const BorderSide(
-                    width: 2.0,
-                    color: Colors.blueGrey,
-                  ),
+                  side: const BorderSide(width: 2.0, color: Colors.blueGrey),
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      MdiIcons.airport,
-                      size: 22,
-                      color: _themeProvider!.mainText,
-                    ),
+                    Icon(MdiIcons.airport, size: 22, color: _themeProvider!.mainText),
                     const SizedBox(width: 6),
                     Semantics(
                       label: "Open Travel Agency",
                       child: Column(
                         children: [
                           ExcludeSemantics(
-                            child: Text(
-                              "TRAVEL",
-                              style: TextStyle(
-                                fontSize: 8,
-                                color: _themeProvider!.mainText,
-                              ),
-                            ),
+                            child: Text("TRAVEL", style: TextStyle(fontSize: 8, color: _themeProvider!.mainText)),
                           ),
                           ExcludeSemantics(
-                            child: Text(
-                              "AGENCY",
-                              style: TextStyle(
-                                fontSize: 8,
-                                color: _themeProvider!.mainText,
-                              ),
-                            ),
+                            child: Text("AGENCY", style: TextStyle(fontSize: 8, color: _themeProvider!.mainText)),
                           ),
                         ],
                       ),
@@ -1966,10 +1843,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             constraints: const BoxConstraints.expand(width: 32, height: 32),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             shape: RoundedRectangleBorder(
-              side: BorderSide(
-                color: _travelNotificationsPending ? Colors.green : Colors.blueGrey,
-                width: 2,
-              ),
+              side: BorderSide(color: _travelNotificationsPending ? Colors.green : Colors.blueGrey, width: 2),
               borderRadius: BorderRadius.circular(50),
             ),
             child: _notificationIcon(
@@ -1984,17 +1858,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             constraints: const BoxConstraints.expand(width: 32, height: 32),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             shape: RoundedRectangleBorder(
-              side: const BorderSide(
-                color: Colors.blueGrey,
-                width: 2,
-              ),
+              side: const BorderSide(color: Colors.blueGrey, width: 2),
               borderRadius: BorderRadius.circular(50),
             ),
-            child: _notificationIcon(
-              ProfileNotification.travel,
-              size: 20,
-              forcedTravelIcon: NotificationType.alarm,
-            ),
+            child: _notificationIcon(ProfileNotification.travel, size: 20, forcedTravelIcon: NotificationType.alarm),
           ),
           const SizedBox(width: 10),
           RawMaterialButton(
@@ -2002,17 +1869,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             constraints: const BoxConstraints.expand(width: 32, height: 32),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             shape: RoundedRectangleBorder(
-              side: const BorderSide(
-                color: Colors.blueGrey,
-                width: 2,
-              ),
+              side: const BorderSide(color: Colors.blueGrey, width: 2),
               borderRadius: BorderRadius.circular(50),
             ),
-            child: _notificationIcon(
-              ProfileNotification.travel,
-              size: 20,
-              forcedTravelIcon: NotificationType.timer,
-            ),
+            child: _notificationIcon(ProfileNotification.travel, size: 20, forcedTravelIcon: NotificationType.timer),
           ),
         ],
       );
@@ -2027,10 +1887,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               constraints: const BoxConstraints.expand(width: 32, height: 32),
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               shape: RoundedRectangleBorder(
-                side: BorderSide(
-                  color: _travelNotificationsPending ? Colors.green : Colors.blueGrey,
-                  width: 2,
-                ),
+                side: BorderSide(color: _travelNotificationsPending ? Colors.green : Colors.blueGrey, width: 2),
                 borderRadius: BorderRadius.circular(50),
               ),
               child: _notificationIcon(
@@ -2051,11 +1908,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 ),
                 borderRadius: BorderRadius.circular(50),
               ),
-              child: _notificationIcon(
-                ProfileNotification.travel,
-                size: 20,
-                forcedTravelIcon: NotificationType.alarm,
-              ),
+              child: _notificationIcon(ProfileNotification.travel, size: 20, forcedTravelIcon: NotificationType.alarm),
             ),
           ],
         );
@@ -2066,10 +1919,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           constraints: const BoxConstraints.expand(width: 32, height: 32),
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           shape: RoundedRectangleBorder(
-            side: BorderSide(
-              color: _travelNotificationsPending ? Colors.green : Colors.blueGrey,
-              width: 2,
-            ),
+            side: BorderSide(color: _travelNotificationsPending ? Colors.green : Colors.blueGrey, width: 2),
             borderRadius: BorderRadius.circular(50),
           ),
           child: _notificationIcon(
@@ -2127,13 +1977,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               child: Semantics(
                 label: "Travel Card",
                 child: const ExcludeSemantics(
-                  child: Text(
-                    'TRAVEL',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: Text('TRAVEL', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ),
@@ -2154,13 +1998,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: <Widget>[
             const Padding(
               padding: EdgeInsets.only(bottom: 15),
-              child: Text(
-                'BARS',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              child: Text('BARS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
             Padding(
               padding: const EdgeInsets.only(left: 8),
@@ -2172,11 +2010,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         const SizedBox(width: 65),
                         Text(
                           'CHAINING (${_chainModel.chain!.current}/${_chainModel.chain!.max})',
-                          style: const TextStyle(
-                            color: Colors.blue,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
+                          style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 10),
                         ),
                       ],
                     )
@@ -2187,10 +2021,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     children: <Widget>[
                       Row(
                         children: <Widget>[
-                          const SizedBox(
-                            width: 60,
-                            child: Text('Energy'),
-                          ),
+                          const SizedBox(width: 60, child: Text('Energy')),
                           const SizedBox(width: 10),
                           GestureDetector(
                             key: _showOne,
@@ -2203,7 +2034,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                             child: Showcase(
                               key: _showcaseProfileBars,
                               title: 'Did you know?',
-                              description: '\nTap any of the bars to launch a browser '
+                              description:
+                                  '\nTap any of the bars to launch a browser '
                                   'straight to the gym, crimes or items sections!',
                               targetPadding: const EdgeInsets.all(10),
                               disableMovingAnimation: true,
@@ -2237,13 +2069,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               child: GestureDetector(
                                 onTap: () {
                                   // Open chaining section
-                                  widget.callBackSection(2);
+                                  widget.callBackSection(DrawerSection.chaining);
                                 },
-                                child: const Icon(
-                                  MdiIcons.linkVariant,
-                                  color: Colors.blue,
-                                  size: 22,
-                                ),
+                                child: const Icon(MdiIcons.linkVariant, color: Colors.blue, size: 22),
                               ),
                             )
                           else
@@ -2267,10 +2095,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     children: <Widget>[
                       Row(
                         children: <Widget>[
-                          const SizedBox(
-                            width: 60,
-                            child: Text('Nerve'),
-                          ),
+                          const SizedBox(width: 60, child: Text('Nerve')),
                           const SizedBox(width: 10),
                           GestureDetector(
                             onLongPress: () {
@@ -2314,10 +2139,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 children: <Widget>[
                   Row(
                     children: <Widget>[
-                      const SizedBox(
-                        width: 60,
-                        child: Text('Happy'),
-                      ),
+                      const SizedBox(width: 60, child: Text('Happy')),
                       const SizedBox(width: 10),
                       GestureDetector(
                         onLongPress: () {
@@ -2362,20 +2184,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: <Widget>[
-                          const SizedBox(
-                            width: 60,
-                            child: Text('Life'),
-                          ),
+                          const SizedBox(width: 60, child: Text('Life')),
                           const SizedBox(width: 10),
                           GestureDetector(
                             onLongPress: () {
                               if (_settingsProvider!.lifeBarOption == "ask") {
                                 _showLifeBarDialog(context, longPress: true);
                               } else if (_settingsProvider!.lifeBarOption == "inventory") {
-                                _launchBrowser(
-                                  url: 'https://www.torn.com/item.php#medical-items',
-                                  shortTap: false,
-                                );
+                                _launchBrowser(url: 'https://www.torn.com/item.php#medical-items', shortTap: false);
                               } else if (_settingsProvider!.lifeBarOption == "faction") {
                                 _launchBrowser(
                                   url: 'https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=medical',
@@ -2387,10 +2203,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               if (_settingsProvider!.lifeBarOption == "ask") {
                                 _showLifeBarDialog(context);
                               } else if (_settingsProvider!.lifeBarOption == "inventory") {
-                                _launchBrowser(
-                                  url: 'https://www.torn.com/item.php#medical-items',
-                                  shortTap: true,
-                                );
+                                _launchBrowser(url: 'https://www.torn.com/item.php#medical-items', shortTap: true);
                               } else if (_settingsProvider!.lifeBarOption == "faction") {
                                 _launchBrowser(
                                   url: 'https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=medical',
@@ -2418,11 +2231,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                             ),
                           ),
                           if (_user!.status!.state == "Hospital")
-                            const Icon(
-                              Icons.local_hospital,
-                              size: 20,
-                              color: Colors.red,
-                            )
+                            const Icon(Icons.local_hospital, size: 20, color: Colors.red)
                           else
                             const SizedBox.shrink(),
                         ],
@@ -2452,11 +2261,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             timeFormatSetting: _settingsProvider!.currentTimeFormat,
             timeZoneSetting: _settingsProvider!.currentTimeZone,
           ).formatHourWithDaysElapsed();
-          return Row(
-            children: <Widget>[
-              const SizedBox(width: 65),
-              Text('Full at $timeFormatted'),
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(top: 2, left: 12),
+            child: Row(children: <Widget>[const SizedBox(width: 65), Text('Full at $timeFormatted')]),
           );
         }
       case "nerve":
@@ -2469,11 +2276,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             timeFormatSetting: _settingsProvider!.currentTimeFormat,
             timeZoneSetting: _settingsProvider!.currentTimeZone,
           ).formatHourWithDaysElapsed();
-          return Row(
-            children: <Widget>[
-              const SizedBox(width: 65),
-              Text('Full at $timeFormatted'),
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(top: 2, left: 12),
+            child: Row(children: <Widget>[const SizedBox(width: 65), Text('Full at $timeFormatted')]),
           );
         }
       case "happy":
@@ -2486,11 +2291,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             timeFormatSetting: _settingsProvider!.currentTimeFormat,
             timeZoneSetting: _settingsProvider!.currentTimeZone,
           ).formatHourWithDaysElapsed();
-          return Row(
-            children: <Widget>[
-              const SizedBox(width: 65),
-              Text('Full at $timeFormatted'),
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(top: 2, left: 12),
+            child: Row(children: <Widget>[const SizedBox(width: 65), Text('Full at $timeFormatted')]),
           );
         }
       case "life":
@@ -2503,11 +2306,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             timeFormatSetting: _settingsProvider!.currentTimeFormat,
             timeZoneSetting: _settingsProvider!.currentTimeZone,
           ).formatHourWithDaysElapsed();
-          return Row(
-            children: <Widget>[
-              const SizedBox(width: 65),
-              Text('Full at $timeFormatted'),
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(top: 2, left: 12),
+            child: Row(children: <Widget>[const SizedBox(width: 65), Text('Full at $timeFormatted')]),
           );
         }
       default:
@@ -2518,7 +2319,6 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   Future<void> _refreshActiveAlarmKitIds() async {
     if (!Platform.isIOS) return;
     if (!_isAlarmKitAvailableIos) return;
-    if (!_hasProfileAlarmMode()) return;
     final ids = await AlarmKitServiceIos.listLogicalIds();
 
     if (mounted) {
@@ -2528,20 +2328,6 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           ..addAll(ids);
       });
     }
-  }
-
-  bool _hasProfileAlarmMode() {
-    return _travelNotificationType == NotificationType.alarm ||
-        _energyNotificationType == NotificationType.alarm ||
-        _nerveNotificationType == NotificationType.alarm ||
-        _lifeNotificationType == NotificationType.alarm ||
-        _drugsNotificationType == NotificationType.alarm ||
-        _medicalNotificationType == NotificationType.alarm ||
-        _boosterNotificationType == NotificationType.alarm ||
-        _hospitalNotificationType == NotificationType.alarm ||
-        _jailNotificationType == NotificationType.alarm ||
-        _rankedWarNotificationType == NotificationType.alarm ||
-        _raceStartNotificationType == NotificationType.alarm;
   }
 
   Widget _notificationIcon(
@@ -2665,11 +2451,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           } else {
             _customEnergyMaxOverride = true;
             Prefs().setEnergyPercentageOverride(true);
-            notificationSetString = 'You are already above your chosen value '
+            notificationSetString =
+                'You are already above your chosen value '
                 '(E$_customEnergyTrigger), notification set for full energy at $formattedTime';
-            alarmSetString = 'You are already above your chosen value '
+            alarmSetString =
+                'You are already above your chosen value '
                 '(E$_customEnergyTrigger), alarm set for full energy at $formattedTime';
-            timerSetString = 'You are already above your chosen value '
+            timerSetString =
+                'You are already above your chosen value '
                 '(E$_customEnergyTrigger), timer set for full energy at $formattedTime';
           }
 
@@ -2721,11 +2510,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           } else {
             _customNerveMaxOverride = true;
             Prefs().setNervePercentageOverride(true);
-            notificationSetString = 'You are already above your chosen value '
+            notificationSetString =
+                'You are already above your chosen value '
                 '(N$_customNerveTrigger), notification set for full nerve at $formattedTime';
-            alarmSetString = 'You are already above your chosen value '
+            alarmSetString =
+                'You are already above your chosen value '
                 '(N$_customNerveTrigger), alarm set for full nerve at $formattedTime';
-            timerSetString = 'You are already above your chosen value '
+            timerSetString =
+                'You are already above your chosen value '
                 '(N$_customNerveTrigger), timer set for full nerve at $formattedTime';
           }
 
@@ -2830,6 +2622,29 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         timerSetString = 'Education timer set for $formattedTime';
         notificationType = _educationNotificationType;
         notificationIcon = _educationNotificationIcon ?? Icons.chat_bubble_outline;
+
+      case ProfileNotification.virus:
+        semanticsLabel += "for virus";
+        if (_virusModel != null) {
+          secondsToGo = _virusModel!.until - (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+          _virusNotificationTime = DateTime.fromMillisecondsSinceEpoch(_virusModel!.until * 1000);
+        } else {
+          secondsToGo = 0;
+          _virusNotificationTime = DateTime.now();
+        }
+        notificationsPending = _virusNotificationsPending;
+        final formattedTime = TimeFormatter(
+          inputTime: _virusNotificationTime,
+          timeFormatSetting: _settingsProvider!.currentTimeFormat,
+          timeZoneSetting: _settingsProvider!.currentTimeZone,
+        ).formatHourWithDaysElapsed();
+        notificationSetString = 'Virus notification set for $formattedTime';
+        notificationCancelString = 'Virus notification cancelled!';
+        alarmSetString = 'Virus alarm set for $formattedTime';
+        alarmCancelString = 'Virus alarm cancelled!';
+        timerSetString = 'Virus timer set for $formattedTime';
+        notificationType = _virusNotificationType;
+        notificationIcon = _virusNotificationIcon ?? Icons.chat_bubble_outline;
 
       case ProfileNotification.hospital:
         semanticsLabel += "for hospital";
@@ -3005,11 +2820,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         label: semanticsLabel,
         child: InkWell(
           splashColor: Colors.transparent,
-          child: Icon(
-            notificationIcon,
-            size: size,
-            color: thisColor,
-          ),
+          child: Icon(notificationIcon, size: size, color: thisColor),
           onTap: () async {
             switch (notificationType) {
               case NotificationType.notification:
@@ -3017,10 +2828,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   _scheduleNotification(profileNotification);
                   BotToast.showText(
                     text: notificationSetString,
-                    textStyle: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white,
-                    ),
+                    textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                     contentColor: percentageError
                         ? _themeProvider!.getTextColor(Colors.red)
                         : _themeProvider!.getTextColor(Colors.green),
@@ -3031,10 +2839,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   _cancelNotifications(profileNotification);
                   BotToast.showText(
                     text: notificationCancelString,
-                    textStyle: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white,
-                    ),
+                    textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                     contentColor: _themeProvider!.getTextColor(Colors.orange[800]),
                     duration: const Duration(seconds: 5),
                     contentPadding: const EdgeInsets.all(10),
@@ -3047,10 +2852,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   await _refreshActiveAlarmKitIds();
                   BotToast.showText(
                     text: alarmCancelString,
-                    textStyle: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white,
-                    ),
+                    textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                     contentColor: _themeProvider!.getTextColor(Colors.orange[800]),
                     duration: const Duration(seconds: 5),
                     contentPadding: const EdgeInsets.all(10),
@@ -3064,10 +2866,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 _setTimer(profileNotification);
                 BotToast.showText(
                   text: timerSetString,
-                  textStyle: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white,
-                  ),
+                  textStyle: const TextStyle(fontSize: 14, color: Colors.white),
                   contentColor: percentageError
                       ? _themeProvider!.getTextColor(Colors.red)
                       : _themeProvider!.getTextColor(Colors.green),
@@ -3091,11 +2890,20 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       }
     }
 
+    bool showVirus = false;
+    if (_settingsProvider!.virusBarEnabled && _virusModel != null) {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      if (_virusModel!.until > now) {
+        showVirus = true;
+      }
+    }
+
     Widget cooldownItems;
     if (_user!.cooldowns!.drug! > 0 ||
         _user!.cooldowns!.booster! > 0 ||
         _user!.cooldowns!.medical! > 0 ||
-        showEducation) {
+        showEducation ||
+        showVirus) {
       cooldownItems = Padding(
         padding: const EdgeInsets.only(left: 8),
         child: Column(
@@ -3106,20 +2914,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      Expanded(
-                        child: Row(
-                          children: [
-                            _drugIcon(),
-                            const SizedBox(width: 10),
-                            _drugCounter(),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: Row(children: [_drugIcon(), const SizedBox(width: 10), _drugCounter()])),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          _notificationIcon(ProfileNotification.drugs),
-                        ],
+                        children: [_notificationIcon(ProfileNotification.drugs)],
                       ),
                     ],
                   ),
@@ -3134,20 +2932,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      Expanded(
-                        child: Row(
-                          children: [
-                            _medicalIcon(),
-                            const SizedBox(width: 10),
-                            _medicalCounter(),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: Row(children: [_medicalIcon(), const SizedBox(width: 10), _medicalCounter()])),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          _notificationIcon(ProfileNotification.medical),
-                        ],
+                        children: [_notificationIcon(ProfileNotification.medical)],
                       ),
                     ],
                   ),
@@ -3162,20 +2950,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
-                      Expanded(
-                        child: Row(
-                          children: [
-                            _boosterIcon(),
-                            const SizedBox(width: 10),
-                            _boosterCounter(),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: Row(children: [_boosterIcon(), const SizedBox(width: 10), _boosterCounter()])),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          _notificationIcon(ProfileNotification.booster),
-                        ],
+                        children: [_notificationIcon(ProfileNotification.booster)],
                       ),
                     ],
                   ),
@@ -3191,19 +2969,29 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: <Widget>[
                       Expanded(
-                        child: Row(
-                          children: [
-                            _educationIcon(),
-                            const SizedBox(width: 10),
-                            _educationCounter(),
-                          ],
-                        ),
+                        child: Row(children: [_educationIcon(), const SizedBox(width: 10), _educationCounter()]),
                       ),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          _notificationIcon(ProfileNotification.education),
-                        ],
+                        children: [_notificationIcon(ProfileNotification.education)],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              )
+            else
+              const SizedBox.shrink(),
+            if (showVirus)
+              Column(
+                children: <Widget>[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: <Widget>[
+                      Expanded(child: Row(children: [_virusIcon(), const SizedBox(width: 10), _virusCounter()])),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [_notificationIcon(ProfileNotification.virus)],
                       ),
                     ],
                   ),
@@ -3217,12 +3005,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
     } else {
       cooldownItems = const Row(
-        children: <Widget>[
-          Padding(
-            padding: EdgeInsets.only(left: 10),
-            child: Text("Nothing to report, well done!"),
-          ),
-        ],
+        children: <Widget>[Padding(padding: EdgeInsets.only(left: 10), child: Text("Nothing to report, well done!"))],
       );
     }
 
@@ -3234,13 +3017,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: <Widget>[
             const Padding(
               padding: EdgeInsets.only(bottom: 15),
-              child: Text(
-                'COOLDOWNS',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              child: Text('COOLDOWNS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
             cooldownItems,
             const SizedBox(height: 10),
@@ -3311,6 +3088,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     return Icon(MdiIcons.schoolOutline, size: 20, color: _themeProvider!.mainText);
   }
 
+  Widget _virusIcon() {
+    return Icon(MdiIcons.bug, size: 20, color: _themeProvider!.mainText);
+  }
+
   Widget _drugCounter() {
     final DateTime timeEnd = _serverTime.add(Duration(seconds: _user!.cooldowns!.drug!));
 
@@ -3321,10 +3102,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     ).formatHourWithDaysElapsed();
     final String diff = _timeFormatted(timeEnd, previous: formattedTime);
     return Flexible(
-      child: Padding(
-        padding: const EdgeInsets.only(right: 5),
-        child: Text('@ $formattedTime$diff'),
-      ),
+      child: Padding(padding: const EdgeInsets.only(right: 5), child: Text('@ $formattedTime$diff')),
     );
   }
 
@@ -3337,10 +3115,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     ).formatHourWithDaysElapsed();
     final String diff = _timeFormatted(timeEnd, previous: formattedTime);
     return Flexible(
-      child: Padding(
-        padding: const EdgeInsets.only(right: 5),
-        child: Text('@ $formattedTime$diff'),
-      ),
+      child: Padding(padding: const EdgeInsets.only(right: 5), child: Text('@ $formattedTime$diff')),
     );
   }
 
@@ -3353,17 +3128,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     ).formatHourWithDaysElapsed();
     final String diff = _timeFormatted(timeEnd, previous: formattedTime);
     return Flexible(
-      child: Padding(
-        padding: const EdgeInsets.only(right: 5),
-        child: Text('@ $formattedTime$diff'),
-      ),
+      child: Padding(padding: const EdgeInsets.only(right: 5), child: Text('@ $formattedTime$diff')),
     );
   }
 
   Widget _educationCounter() {
-    final DateTime timeEnd = DateTime.fromMillisecondsSinceEpoch(
-      _miscModel!.education.current!.until * 1000,
-    );
+    final DateTime timeEnd = DateTime.fromMillisecondsSinceEpoch(_miscModel!.education.current!.until * 1000);
     final formattedTime = TimeFormatter(
       inputTime: timeEnd,
       timeFormatSetting: _settingsProvider!.currentTimeFormat,
@@ -3371,10 +3141,20 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     ).formatHourWithDaysElapsed();
     final String diff = _timeFormatted(timeEnd, previous: formattedTime);
     return Flexible(
-      child: Padding(
-        padding: const EdgeInsets.only(right: 5),
-        child: Text('@ $formattedTime$diff'),
-      ),
+      child: Padding(padding: const EdgeInsets.only(right: 5), child: Text('@ $formattedTime$diff')),
+    );
+  }
+
+  Widget _virusCounter() {
+    final DateTime timeEnd = DateTime.fromMillisecondsSinceEpoch(_virusModel!.until * 1000);
+    final formattedTime = TimeFormatter(
+      inputTime: timeEnd,
+      timeFormatSetting: _settingsProvider!.currentTimeFormat,
+      timeZoneSetting: _settingsProvider!.currentTimeZone,
+    ).formatHourWithDaysElapsed();
+    final String diff = _timeFormatted(timeEnd, previous: formattedTime);
+    return Flexible(
+      child: Padding(padding: const EdgeInsets.only(right: 5), child: Text('@ $formattedTime$diff')),
     );
   }
 
@@ -3394,10 +3174,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         timeZoneSetting: _settingsProvider!.currentTimeZone,
       ).formatDayWeek;
       if (previous.contains("tomorrow")) {
-        diff = ', in '
+        diff =
+            ', in '
             '${twoDigits(timeDifference.inHours)}h ${twoDigitMinutes}m';
       } else {
-        diff = ' (${dayWeek!.replaceAll("on ", "")}), in '
+        diff =
+            ' (${dayWeek!.replaceAll("on ", "")}), in '
             '${twoDigits(timeDifference.inHours)}h ${twoDigitMinutes}m';
       }
     }
@@ -3416,20 +3198,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               children: [
                 Padding(
                   padding: EdgeInsets.all(15.0),
-                  child: Text(
-                    'EVENTS',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: Text('EVENTS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(25, 5, 20, 20),
-                  child: Text(
-                    "Loading...",
-                  ),
-                ),
+                Padding(padding: EdgeInsets.fromLTRB(25, 5, 20, 20), child: Text("Loading...")),
               ],
             ),
           ],
@@ -3446,12 +3217,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
     int loopCount = 1;
     int? maxCount;
+    bool showingAllAvailable = false;
 
     if (_events.length > maxToShow!) {
       maxCount = maxToShow;
     } else {
       maxCount = _events.length;
       maxToShow = _events.length;
+      showingAllAvailable = true;
     }
 
     for (final Event e in _events) {
@@ -3467,23 +3240,14 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       // (the events API v1 has got many issues in http links, so we need to correct them manually)
       final Widget messageWidget = buildEventMessageWidget(e.event!, fontWeight, _launchBrowser, _themeProvider!);
 
-      final Widget insideIcon = EventIcons(
-        message: e.event!,
-        themeProvider: _themeProvider,
-      );
+      final Widget insideIcon = EventIcons(message: e.event!, themeProvider: _themeProvider);
 
       IndicatorStyle iconBubble = IndicatorStyle(
         width: 30,
         height: 30,
         drawGap: true,
         indicator: Container(
-          decoration: const BoxDecoration(
-            border: Border.fromBorderSide(
-              BorderSide(
-                color: Colors.grey,
-              ),
-            ),
-          ),
+          decoration: const BoxDecoration(border: Border.fromBorderSide(BorderSide(color: Colors.grey))),
           child: insideIcon,
         ),
       );
@@ -3496,19 +3260,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         alignment: TimelineAlign.manual,
         indicatorStyle: iconBubble,
         lineXY: 0.25,
-        endChild: Container(
-          padding: const EdgeInsets.all(8.0),
-          child: messageWidget,
-        ),
+        endChild: Container(padding: const EdgeInsets.all(8.0), child: messageWidget),
         startChild: Container(
           padding: const EdgeInsets.only(right: 5.0),
-          child: Text(
-            _occurrenceTimeFormatted(eventTime),
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: fontWeight,
-            ),
-          ),
+          child: Text(_occurrenceTimeFormatted(eventTime), style: TextStyle(fontSize: 11, fontWeight: fontWeight)),
         ),
       );
 
@@ -3525,11 +3280,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         padding: const EdgeInsets.only(top: 10),
         child: Center(
           child: Text(
-            "(Showing last $maxToShow events)",
-            style: const TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
+            showingAllAvailable
+                ? "(Showing all $maxToShow events from the last month)"
+                : "(Showing last $maxToShow events)",
+            style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
           ),
         ),
       ),
@@ -3552,13 +3306,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           padding: const EdgeInsets.all(15.0),
           child: Row(
             children: [
-              const Text(
-                'EVENTS',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              const Text('EVENTS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(width: 8),
               InkWell(
                 borderRadius: BorderRadius.circular(100),
@@ -3568,10 +3316,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 onTap: () {
                   _launchBrowser(url: 'https://www.torn.com/events.php#/step=all', shortTap: true);
                 },
-                child: const Padding(
-                  padding: EdgeInsets.only(right: 5),
-                  child: Icon(Icons.open_in_new, size: 18),
-                ),
+                child: const Padding(padding: EdgeInsets.only(right: 5), child: Icon(Icons.open_in_new, size: 18)),
               ),
             ],
           ),
@@ -3590,10 +3335,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ),
         expanded: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: timeline,
-          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: timeline),
         ),
       ),
     );
@@ -3630,20 +3372,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               children: [
                 Padding(
                   padding: EdgeInsets.all(15.0),
-                  child: Text(
-                    'MESSAGES',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: Text('MESSAGES', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
                 Padding(
                   padding: EdgeInsets.fromLTRB(25, 5, 20, 20),
-                  child: Text(
-                    "You have no unread messages",
-                    style: TextStyle(color: Colors.green),
-                  ),
+                  child: Text("You have no unread messages", style: TextStyle(color: Colors.green)),
                 ),
               ],
             ),
@@ -3696,13 +3429,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         height: 30,
         drawGap: true,
         indicator: Container(
-          decoration: const BoxDecoration(
-            border: Border.fromBorderSide(
-              BorderSide(
-                color: Colors.grey,
-              ),
-            ),
-          ),
+          decoration: const BoxDecoration(border: Border.fromBorderSide(BorderSide(color: Colors.grey))),
           child: insideIcon,
         ),
       );
@@ -3728,17 +3455,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       Text(
                         msg.name ?? "Torn", // Torn staff might send messages with null sender!
                         style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            fontStyle: msg.name == null ? FontStyle.italic : FontStyle.normal),
-                      ),
-                      Text(
-                        title,
-                        style: const TextStyle(
                           fontSize: 12,
-                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.bold,
+                          fontStyle: msg.name == null ? FontStyle.italic : FontStyle.normal,
                         ),
                       ),
+                      Text(title, style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
                     ],
                   ),
                 ),
@@ -3748,14 +3470,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     child: Icon(Icons.markunread, color: Colors.green[600]),
                     onLongPress: () {
                       _launchBrowser(
-                        url: "https://www.torn.com/messages.php#/p=read&ID="
+                        url:
+                            "https://www.torn.com/messages.php#/p=read&ID="
                             "${messages.keys.elementAt(i)}&suffix=inbox",
                         shortTap: false,
                       );
                     },
                     onTap: () {
                       _launchBrowser(
-                        url: "https://www.torn.com/messages.php#/p=read&ID="
+                        url:
+                            "https://www.torn.com/messages.php#/p=read&ID="
                             "${messages.keys.elementAt(i)}&suffix=inbox",
                         shortTap: true,
                       );
@@ -3766,14 +3490,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     child: const Icon(Icons.mark_as_unread),
                     onLongPress: () {
                       _launchBrowser(
-                        url: "https://www.torn.com/messages.php#/p=read&ID="
+                        url:
+                            "https://www.torn.com/messages.php#/p=read&ID="
                             "${messages.keys.elementAt(i)}&suffix=inbox",
                         shortTap: false,
                       );
                     },
                     onTap: () {
                       _launchBrowser(
-                        url: "https://www.torn.com/messages.php#/p=read&ID="
+                        url:
+                            "https://www.torn.com/messages.php#/p=read&ID="
                             "${messages.keys.elementAt(i)}&suffix=inbox",
                         shortTap: true,
                       );
@@ -3788,10 +3514,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             padding: const EdgeInsets.only(right: 5.0),
             child: Text(
               _occurrenceTimeFormatted(messageTime),
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: msg.seen == 0 ? FontWeight.bold : FontWeight.normal,
-              ),
+              style: TextStyle(fontSize: 11, fontWeight: msg.seen == 0 ? FontWeight.bold : FontWeight.normal),
             ),
           ),
         ),
@@ -3811,10 +3534,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         child: Center(
           child: Text(
             "(Showing last $maxToShow messages)",
-            style: const TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
+            style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
           ),
         ),
       ),
@@ -3832,13 +3552,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     var unreadTotalString = '';
     final lastMessageDate = DateTime.fromMillisecondsSinceEpoch(messages.values.last.timestamp * 1000);
     if (unreadTotalCount == 0) {
-      unreadTotalString = 'No unread messages '
+      unreadTotalString =
+          'No unread messages '
           '(since ${_occurrenceTimeFormatted(lastMessageDate)})';
     } else if (unreadTotalCount == 1) {
-      unreadTotalString = '1 unread message '
+      unreadTotalString =
+          '1 unread message '
           '(since ${_occurrenceTimeFormatted(lastMessageDate)})';
     } else {
-      unreadTotalString = '$unreadTotalCount unread messages '
+      unreadTotalString =
+          '$unreadTotalCount unread messages '
           '(since ${_occurrenceTimeFormatted(lastMessageDate)})';
     }
 
@@ -3850,13 +3573,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           padding: const EdgeInsets.all(15.0),
           child: Row(
             children: [
-              const Text(
-                'MESSAGES',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              const Text('MESSAGES', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(width: 8),
               InkWell(
                 borderRadius: BorderRadius.circular(100),
@@ -3866,10 +3583,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 onTap: () {
                   _launchBrowser(url: "https://www.torn.com/messages.php", shortTap: true);
                 },
-                child: const Padding(
-                  padding: EdgeInsets.only(right: 5),
-                  child: Icon(MdiIcons.openInApp, size: 18),
-                ),
+                child: const Padding(padding: EdgeInsets.only(right: 5), child: Icon(MdiIcons.openInApp, size: 18)),
               ),
             ],
           ),
@@ -3890,21 +3604,13 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 4),
               if (unreadTotalCount > 0 && unreadTotalCount > unreadRecentCount)
-                Text(
-                  unreadTotalString,
-                  style: const TextStyle(
-                    fontSize: 11,
-                  ),
-                ),
+                Text(unreadTotalString, style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
         expanded: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: timeline,
-          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: timeline),
         ),
       ),
     );
@@ -3913,35 +3619,17 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   Widget _messagesInsideIconCases(String type) {
     Widget insideIcon;
     if (type.contains('Company newsletter')) {
-      insideIcon = Icon(
-        Icons.work,
-        color: Colors.brown[300],
-        size: 20,
-      );
+      insideIcon = Icon(Icons.work, color: Colors.brown[300], size: 20);
     } else if (type.contains('Faction newsletter')) {
       insideIcon = Center(
-        child: Image.asset(
-          'images/icons/faction.png',
-          color: Colors.deepOrange[700],
-          width: 14,
-          height: 14,
-        ),
+        child: Image.asset('images/icons/faction.png', color: Colors.deepOrange[700], width: 14, height: 14),
       );
     } else if (type.contains('User message')) {
-      insideIcon = Center(
-        child: Icon(
-          MdiIcons.accountDetails,
-          color: Colors.blueGrey[500],
-          size: 20,
-        ),
-      );
+      insideIcon = Center(child: Icon(MdiIcons.accountDetails, color: Colors.blueGrey[500], size: 20));
     } else {
       insideIcon = Container(
         child: const Center(
-          child: Text(
-            'T',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-          ),
+          child: Text('T', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
         ),
       );
     }
@@ -4104,456 +3792,90 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       label: "Player stats",
       explicitChildNodes: true,
       child: Card(
-        child: Builder(builder: (context) {
-          return ExpandablePanel(
-            theme: ExpandableThemeData(iconColor: _themeProvider!.mainText),
-            controller: _basicInfoExpController,
-            header: Padding(
-              padding: const EdgeInsets.all(15.0),
-              child: Row(
-                children: [
-                  const Text(
-                    'BASIC INFO',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  GestureDetector(
-                    child: const Icon(Icons.copy, size: 14),
-                    onTap: () {
-                      _shareMisc();
-                    },
-                  ),
-                ],
-              ),
-            ),
-            collapsed: Padding(
-              padding: const EdgeInsets.fromLTRB(25, 5, 20, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _cashWallet(dense: false),
-                  const SizedBox(height: 4),
-                  Semantics(
-                    label: "${_miscModel!.money?.points ?? '(error)'} Torn Points, tap to open",
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          onLongPress: () {
-                            _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: false);
-                          },
-                          onTap: () async {
-                            _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: true);
-                          },
-                          child: const Icon(
-                            MdiIcons.alphaPCircleOutline,
-                            color: Colors.blueAccent,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Text('${_miscModel!.money?.points ?? '(error)'}'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  _jobPoints(),
-                  const SizedBox(height: 4),
-                  _companyAddictionWidget(),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Flexible(
-                        child: SelectionArea(
-                          child: Text(
-                            'Battle Stats (eff.): ${decimalFormat.format(totalEffective)}',
-                          ),
-                        ),
-                      ),
-                      if (totalEffectiveModifier == null)
-                        SelectionArea(
-                          child: Text(
-                            '(error)',
-                            style: TextStyle(
-                              color: _themeProvider!.getTextColor(Colors.red),
-                            ),
-                          ),
-                        )
-                      else if (totalEffectiveModifier < 0)
-                        SelectionArea(
-                          child: Text(
-                            ' ($totalEffectiveModifier%)',
-                            style: TextStyle(
-                              color: _themeProvider!.getTextColor(Colors.red),
-                            ),
-                          ),
-                        )
-                      else if (totalEffectiveModifier > 0)
-                        SelectionArea(
-                          child: Text(
-                            ' (+$totalEffectiveModifier%)',
-                            style: TextStyle(
-                              color: _themeProvider!.getTextColor(Colors.green),
-                            ),
-                          ),
-                        )
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  SelectionArea(
-                      child: Text('Battle Stats: ${decimalFormat.format(_miscModel!.battleStats?.total ?? 0)}')),
-                  if (_settingsProvider!.tornStatsChartEnabled && _settingsProvider!.tornStatsChartInCollapsedMiscCard)
-                    FutureBuilder(
-                      future: _statsChartDataFetched,
-                      builder: (BuildContext context, AsyncSnapshot<dynamic> snapshot) {
-                        if (snapshot.connectionState == ConnectionState.done) {
-                          if (_statsChartModel?.data != null) {
-                            return Column(
-                              children: [
-                                const SizedBox(height: 20),
-                                SizedBox(
-                                  height: _settingsProvider!.tornStatsChartShowBoth ? 400 : 200,
-                                  child: ExcludeSemantics(
-                                    child: StatsChart(
-                                      statsData: _statsChartModel,
-                                      chartType: _settingsProvider!.tornStatsChartType == "line"
-                                          ? TornStatsChartType.Line
-                                          : TornStatsChartType.Pie,
-                                      userController: _u,
-                                      callbackStatsUpdate: _getStatsChart,
-                                      isCachedData: _statsChartIsCached,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 40),
-                              ],
-                            );
-                          } else if (_statsChartError != null) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 15.0),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.start,
-                                children: [
-                                  const Icon(
-                                    Icons.bar_chart,
-                                    color: Colors.red,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      _statsChartError!,
-                                      style: TextStyle(
-                                        color: _themeProvider!.getTextColor(Colors.red),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-                        }
-                        return const SizedBox(height: 8);
-                      },
-                    )
-                  else
-                    const SizedBox(height: 8),
-                  SelectionArea(child: Text('MAN: ${decimalFormat.format(_miscModel!.workStats?.manualLabor ?? 0)}')),
-                  SelectionArea(child: Text('INT: ${decimalFormat.format(_miscModel!.workStats?.intelligence ?? 0)}')),
-                  SelectionArea(child: Text('END: ${decimalFormat.format(_miscModel!.workStats?.endurance ?? 0)}')),
-                ],
-              ),
-            ),
-            expanded: Semantics(
-              explicitChildNodes: true,
-              child: Padding(
+        child: Builder(
+          builder: (context) {
+            return ExpandablePanel(
+              theme: ExpandableThemeData(iconColor: _themeProvider!.mainText),
+              controller: _basicInfoExpController,
+              header: Padding(
                 padding: const EdgeInsets.all(15.0),
+                child: Row(
+                  children: [
+                    const Text('BASIC INFO', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 5),
+                    GestureDetector(
+                      child: const Icon(Icons.copy, size: 14),
+                      onTap: () {
+                        _shareMisc();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              collapsed: Padding(
+                padding: const EdgeInsets.fromLTRB(25, 5, 20, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SelectionArea(child: Text('Rank: ${_user!.rank}')),
-                          SelectionArea(child: Text('Age: ${_user!.age}')),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: _cashWallet(dense: false),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
+                  children: [
+                    _cashWallet(dense: false),
+                    const SizedBox(height: 4),
+                    Semantics(
+                      label: "${_miscModel!.money?.points ?? '(error)'} Torn Points, tap to open",
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Semantics(
-                            label: "Open Torn Points",
-                            child: GestureDetector(
-                              onLongPress: () {
-                                _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: false);
-                              },
-                              onTap: () async {
-                                _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: true);
-                              },
-                              child: const Icon(
-                                MdiIcons.alphaPCircleOutline,
-                                color: Colors.blueAccent,
-                              ),
-                            ),
+                          GestureDetector(
+                            onLongPress: () {
+                              _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: false);
+                            },
+                            onTap: () async {
+                              _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: true);
+                            },
+                            child: const Icon(MdiIcons.alphaPCircleOutline, color: Colors.blueAccent),
                           ),
                           const SizedBox(width: 5),
-                          SelectionArea(child: Text('${_miscModel!.money?.points ?? '(error)'}')),
+                          Text('${_miscModel!.money?.points ?? '(error)'}'),
                         ],
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: _jobPoints(),
-                    ),
+                    _jobPoints(),
                     const SizedBox(height: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: _companyAddictionWidget(),
-                    ),
-                    const SizedBox(height: 20),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Row(
-                        children: [
-                          Semantics(
-                            label: "Effective Stats",
-                            child: const Text(
-                              'EFFECTIVE STATS',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
+                    _companyAddictionWidget(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: SelectionArea(
+                            child: Text('Battle Stats (eff.): ${decimalFormat.format(totalEffective)}'),
+                          ),
+                        ),
+                        if (totalEffectiveModifier == null)
+                          SelectionArea(
+                            child: Text('(error)', style: TextStyle(color: _themeProvider!.getTextColor(Colors.red))),
+                          )
+                        else if (totalEffectiveModifier < 0)
+                          SelectionArea(
+                            child: Text(
+                              ' ($totalEffectiveModifier%)',
+                              style: TextStyle(color: _themeProvider!.getTextColor(Colors.red)),
+                            ),
+                          )
+                        else if (totalEffectiveModifier > 0)
+                          SelectionArea(
+                            child: Text(
+                              ' (+$totalEffectiveModifier%)',
+                              style: TextStyle(color: _themeProvider!.getTextColor(Colors.green)),
                             ),
                           ),
-                          const SizedBox(width: 5),
-                          GestureDetector(
-                            child: const Icon(Icons.copy, size: 14),
-                            onTap: () {
-                              _shareMisc(shareType: "effective");
-                            },
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text('Strength: '),
-                              ),
-                              SelectionArea(
-                                child: Text(
-                                  strengthString.contains("error")
-                                      ? '(error)'
-                                      : decimalFormat.format(strengthModifiedTotal),
-                                ),
-                              ),
-                              if (strengthModified)
-                                Text(
-                                  " $strengthString",
-                                  style: TextStyle(color: strengthColor, fontSize: 12),
-                                )
-                              else
-                                const SizedBox.shrink(),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text('Defense: '),
-                              ),
-                              SelectionArea(
-                                child: Text(
-                                  defenseString.contains("error")
-                                      ? '(error)'
-                                      : decimalFormat.format(defenseModifiedTotal),
-                                ),
-                              ),
-                              if (defenseModified)
-                                Text(
-                                  " $defenseString",
-                                  style: TextStyle(color: defenseColor, fontSize: 12),
-                                )
-                              else
-                                const SizedBox.shrink(),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text('Speed: '),
-                              ),
-                              SelectionArea(
-                                child: Text(
-                                  speedString.contains("error") ? '(error)' : decimalFormat.format(speedModifiedTotal),
-                                ),
-                              ),
-                              if (speedModified)
-                                Text(
-                                  " $speedString",
-                                  style: TextStyle(color: speedColor, fontSize: 12),
-                                )
-                              else
-                                const SizedBox.shrink(),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text('Dexterity: '),
-                              ),
-                              SelectionArea(
-                                child: Text(
-                                  dexString.contains("error") ? '(error)' : decimalFormat.format(dexModifiedTotal),
-                                ),
-                              ),
-                              if (dexModified)
-                                Text(
-                                  " $dexString",
-                                  style: TextStyle(color: dexColor, fontSize: 12),
-                                )
-                              else
-                                const SizedBox.shrink(),
-                            ],
-                          ),
-                          SizedBox(
-                            width: 50,
-                            child: Divider(color: _themeProvider!.mainText, thickness: 0.5),
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text(
-                                  'Total: ',
-                                ),
-                              ),
-                              SelectionArea(
-                                child: Text(
-                                  decimalFormat.format(totalEffective),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                    const SizedBox(height: 2),
+                    SelectionArea(
+                      child: Text('Battle Stats: ${decimalFormat.format(_miscModel!.battleStats?.total ?? 0)}'),
                     ),
-                    const SizedBox(height: 20),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Row(
-                        children: [
-                          Semantics(
-                            label: "Battle Stats",
-                            child: const Text(
-                              'BATTLE STATS',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                          GestureDetector(
-                            child: const Icon(Icons.copy, size: 14),
-                            onTap: () {
-                              _shareMisc(shareType: "battle");
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const SizedBox(width: 80, child: Text('Strength: ')),
-                              SelectionArea(
-                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.strength?.value ?? 0))),
-                              Text(
-                                formatStatsPercent(
-                                    _miscModel!.battleStats?.strength?.value.toInt(), _miscModel!.battleStats?.total),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(width: 80, child: Text('Defense: ')),
-                              SelectionArea(
-                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.defense?.value ?? 0))),
-                              Text(
-                                formatStatsPercent(
-                                    _miscModel!.battleStats?.defense?.value.toInt(), _miscModel!.battleStats?.total),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(width: 80, child: Text('Speed: ')),
-                              SelectionArea(
-                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.speed?.value ?? 0))),
-                              Text(
-                                formatStatsPercent(
-                                    _miscModel!.battleStats?.speed?.value.toInt(), _miscModel!.battleStats?.total),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(width: 80, child: Text('Dexterity: ')),
-                              SelectionArea(
-                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.dexterity?.value ?? 0))),
-                              Text(
-                                formatStatsPercent(
-                                    _miscModel!.battleStats?.dexterity?.value.toInt(), _miscModel!.battleStats?.total),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
-                          SizedBox(
-                            width: 50,
-                            child: Divider(color: _themeProvider!.mainText, thickness: 0.5),
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 80,
-                                child: Text('Total: '),
-                              ),
-                              SelectionArea(child: Text(decimalFormat.format(_miscModel!.battleStats?.total ?? 0))),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (_settingsProvider!.tornStatsChartEnabled)
+                    if (_settingsProvider!.tornStatsChartEnabled &&
+                        _settingsProvider!.tornStatsChartInCollapsedMiscCard)
                       FutureBuilder(
                         future: _statsChartDataFetched,
                         builder: (BuildContext context, AsyncSnapshot<dynamic> snapshot) {
@@ -4561,7 +3883,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                             if (_statsChartModel?.data != null) {
                               return Column(
                                 children: [
-                                  const SizedBox(height: 40),
+                                  const SizedBox(height: 20),
                                   SizedBox(
                                     height: _settingsProvider!.tornStatsChartShowBoth ? 400 : 200,
                                     child: ExcludeSemantics(
@@ -4571,7 +3893,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                             ? TornStatsChartType.Line
                                             : TornStatsChartType.Pie,
                                         userController: _u,
-                                        callbackStatsUpdate: _getStatsChart,
+                                        callbackStatsUpdate: _profileApi.getStatsChart,
                                         isCachedData: _statsChartIsCached,
                                       ),
                                     ),
@@ -4581,21 +3903,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               );
                             } else if (_statsChartError != null) {
                               return Padding(
-                                padding: const EdgeInsets.all(8.0),
+                                padding: const EdgeInsets.symmetric(vertical: 15.0),
                                 child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisAlignment: MainAxisAlignment.start,
                                   children: [
-                                    const Icon(
-                                      Icons.bar_chart,
-                                      color: Colors.red,
-                                      size: 18,
-                                    ),
+                                    const Icon(Icons.bar_chart, color: Colors.red, size: 18),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      _statsChartError!,
-                                      style: TextStyle(
-                                        color: _themeProvider!.getTextColor(Colors.red),
-                                        fontSize: 12,
+                                    Flexible(
+                                      child: Text(
+                                        _statsChartError!,
+                                        style: TextStyle(color: _themeProvider!.getTextColor(Colors.red), fontSize: 12),
                                       ),
                                     ),
                                   ],
@@ -4603,390 +3920,629 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               );
                             }
                           }
-                          return const SizedBox(height: 20);
+                          return const SizedBox(height: 8);
                         },
                       )
                     else
-                      const SizedBox(height: 20),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Row(
-                        children: [
-                          const Text(
-                            'WORK STATS',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                          GestureDetector(
-                            child: const Icon(Icons.copy, size: 14),
-                            onTap: () {
-                              _shareMisc(shareType: "work");
-                            },
-                          ),
-                        ],
-                      ),
+                      const SizedBox(height: 8),
+                    SelectionArea(child: Text('MAN: ${decimalFormat.format(_miscModel!.workStats?.manualLabor ?? 0)}')),
+                    SelectionArea(
+                      child: Text('INT: ${decimalFormat.format(_miscModel!.workStats?.intelligence ?? 0)}'),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 100,
-                                child: Text('Manual labor: '),
-                              ),
-                              SelectionArea(child: Text(decimalFormat.format(_miscModel!.workStats?.manualLabor ?? 0))),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 100,
-                                child: Text('Intelligence: '),
-                              ),
-                              SelectionArea(
-                                  child: Text(decimalFormat.format(_miscModel!.workStats?.intelligence ?? 0))),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const SizedBox(
-                                width: 100,
-                                child: Text('Endurance: '),
-                              ),
-                              SelectionArea(child: Text(decimalFormat.format(_miscModel!.workStats?.endurance ?? 0))),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (skillsExist)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 20),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
-                            child: Row(
-                              children: [
-                                const Text(
-                                  'SKILLS',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                GestureDetector(
-                                  child: const Icon(Icons.copy, size: 14),
-                                  onTap: () {
-                                    _shareMisc(shareType: "skills");
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (racing.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 80,
-                                        child: Text('Racing: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(racing),
-                                      ),
-                                    ],
-                                  ),
-                                if (reviving.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 80,
-                                        child: Text('Reviving: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(reviving),
-                                      ),
-                                    ],
-                                  ),
-                                if (hunting.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 80,
-                                        child: Text('Hunting: '),
-                                      ),
-                                      SelectionArea(child: Text(hunting)),
-                                    ],
-                                  ),
-                                if (crimesExist)
-                                  if (searchForCash.isNotEmpty)
-                                    const Padding(
-                                      padding: EdgeInsets.fromLTRB(0, 10, 0, 5),
-                                      child: Text(
-                                        'CRIMES',
-                                        style: TextStyle(fontSize: 10),
-                                      ),
-                                    ),
-                                Row(
-                                  children: [
-                                    const SizedBox(
-                                      width: 130,
-                                      child: Text('Search for Cash: '),
-                                    ),
-                                    SelectionArea(
-                                      child: Text(
-                                        searchForCash,
-                                        style: TextStyle(
-                                          color: searchForCash == "100"
-                                              ? _themeProvider!.getTextColor(Colors.green)
-                                              : null,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (bootlegging.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Bootlegging: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          bootlegging,
-                                          style: TextStyle(
-                                            color: bootlegging == "100"
-                                                ? _themeProvider!.getTextColor(Colors.green)
-                                                : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (graffiti.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Graffiti: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          graffiti,
-                                          style: TextStyle(
-                                            color:
-                                                graffiti == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (shoplifting.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Shoplifting: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          shoplifting,
-                                          style: TextStyle(
-                                            color: shoplifting == "100"
-                                                ? _themeProvider!.getTextColor(Colors.green)
-                                                : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (pickpocketing.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Pickpocketing: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          pickpocketing,
-                                          style: TextStyle(
-                                            color: pickpocketing == "100"
-                                                ? _themeProvider!.getTextColor(Colors.green)
-                                                : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (cardSkimming.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Card Skimming: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          cardSkimming,
-                                          style: TextStyle(
-                                            color: cardSkimming == "100"
-                                                ? _themeProvider!.getTextColor(Colors.green)
-                                                : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (burglary.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Burglary: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          burglary,
-                                          style: TextStyle(
-                                            color:
-                                                burglary == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (hustling.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Hustling: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          hustling,
-                                          style: TextStyle(
-                                            color:
-                                                hustling == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (disposal.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Disposal: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          disposal,
-                                          style: TextStyle(
-                                            color:
-                                                disposal == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (cracking.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Cracking: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          cracking,
-                                          style: TextStyle(
-                                            color:
-                                                cracking == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (forgery.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Forgery: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          forgery,
-                                          style: TextStyle(
-                                            color: forgery == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (scamming.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Scamming: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          scamming,
-                                          style: TextStyle(
-                                            color:
-                                                scamming == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (arson.isNotEmpty)
-                                  Row(
-                                    children: [
-                                      const SizedBox(
-                                        width: 130,
-                                        child: Text('Arson: '),
-                                      ),
-                                      SelectionArea(
-                                        child: Text(
-                                          arson,
-                                          style: TextStyle(
-                                            color: arson == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    const SizedBox(height: 10),
+                    SelectionArea(child: Text('END: ${decimalFormat.format(_miscModel!.workStats?.endurance ?? 0)}')),
                   ],
                 ),
               ),
-            ),
-          );
-        }),
+              expanded: Semantics(
+                explicitChildNodes: true,
+                child: Padding(
+                  padding: const EdgeInsets.all(15.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SelectionArea(child: Text('Rank: ${_user!.rank}')),
+                            SelectionArea(child: Text('Age: ${_user!.age}')),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Padding(padding: const EdgeInsets.only(left: 8.0), child: _cashWallet(dense: false)),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Row(
+                          children: [
+                            Semantics(
+                              label: "Open Torn Points",
+                              child: GestureDetector(
+                                onLongPress: () {
+                                  _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: false);
+                                },
+                                onTap: () async {
+                                  _launchBrowser(url: 'https://www.torn.com/points.php', shortTap: true);
+                                },
+                                child: const Icon(MdiIcons.alphaPCircleOutline, color: Colors.blueAccent),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            SelectionArea(child: Text('${_miscModel!.money?.points ?? '(error)'}')),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Padding(padding: const EdgeInsets.only(left: 8.0), child: _jobPoints()),
+                      const SizedBox(height: 4),
+                      Padding(padding: const EdgeInsets.only(left: 8.0), child: _companyAddictionWidget()),
+                      const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          children: [
+                            Semantics(
+                              label: "Effective Stats",
+                              child: const Text(
+                                'EFFECTIVE STATS',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            GestureDetector(
+                              child: const Icon(Icons.copy, size: 14),
+                              onTap: () {
+                                _shareMisc(shareType: "effective");
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Strength: ')),
+                                SelectionArea(
+                                  child: Text(
+                                    strengthString.contains("error")
+                                        ? '(error)'
+                                        : decimalFormat.format(strengthModifiedTotal),
+                                  ),
+                                ),
+                                if (strengthModified)
+                                  Text(" $strengthString", style: TextStyle(color: strengthColor, fontSize: 12))
+                                else
+                                  const SizedBox.shrink(),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Defense: ')),
+                                SelectionArea(
+                                  child: Text(
+                                    defenseString.contains("error")
+                                        ? '(error)'
+                                        : decimalFormat.format(defenseModifiedTotal),
+                                  ),
+                                ),
+                                if (defenseModified)
+                                  Text(" $defenseString", style: TextStyle(color: defenseColor, fontSize: 12))
+                                else
+                                  const SizedBox.shrink(),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Speed: ')),
+                                SelectionArea(
+                                  child: Text(
+                                    speedString.contains("error")
+                                        ? '(error)'
+                                        : decimalFormat.format(speedModifiedTotal),
+                                  ),
+                                ),
+                                if (speedModified)
+                                  Text(" $speedString", style: TextStyle(color: speedColor, fontSize: 12))
+                                else
+                                  const SizedBox.shrink(),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Dexterity: ')),
+                                SelectionArea(
+                                  child: Text(
+                                    dexString.contains("error") ? '(error)' : decimalFormat.format(dexModifiedTotal),
+                                  ),
+                                ),
+                                if (dexModified)
+                                  Text(" $dexString", style: TextStyle(color: dexColor, fontSize: 12))
+                                else
+                                  const SizedBox.shrink(),
+                              ],
+                            ),
+                            SizedBox(width: 50, child: Divider(color: _themeProvider!.mainText, thickness: 0.5)),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Total: ')),
+                                SelectionArea(child: Text(decimalFormat.format(totalEffective))),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          children: [
+                            Semantics(
+                              label: "Battle Stats",
+                              child: const Text(
+                                'BATTLE STATS',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            GestureDetector(
+                              child: const Icon(Icons.copy, size: 14),
+                              onTap: () {
+                                _shareMisc(shareType: "battle");
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Strength: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.strength?.value ?? 0)),
+                                ),
+                                Text(
+                                  formatStatsPercent(
+                                    _miscModel!.battleStats?.strength?.value.toInt(),
+                                    _miscModel!.battleStats?.total,
+                                  ),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Defense: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.defense?.value ?? 0)),
+                                ),
+                                Text(
+                                  formatStatsPercent(
+                                    _miscModel!.battleStats?.defense?.value.toInt(),
+                                    _miscModel!.battleStats?.total,
+                                  ),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Speed: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.speed?.value ?? 0)),
+                                ),
+                                Text(
+                                  formatStatsPercent(
+                                    _miscModel!.battleStats?.speed?.value.toInt(),
+                                    _miscModel!.battleStats?.total,
+                                  ),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Dexterity: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.battleStats?.dexterity?.value ?? 0)),
+                                ),
+                                Text(
+                                  formatStatsPercent(
+                                    _miscModel!.battleStats?.dexterity?.value.toInt(),
+                                    _miscModel!.battleStats?.total,
+                                  ),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            SizedBox(width: 50, child: Divider(color: _themeProvider!.mainText, thickness: 0.5)),
+                            Row(
+                              children: [
+                                const SizedBox(width: 80, child: Text('Total: ')),
+                                SelectionArea(child: Text(decimalFormat.format(_miscModel!.battleStats?.total ?? 0))),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_settingsProvider!.tornStatsChartEnabled)
+                        FutureBuilder(
+                          future: _statsChartDataFetched,
+                          builder: (BuildContext context, AsyncSnapshot<dynamic> snapshot) {
+                            if (snapshot.connectionState == ConnectionState.done) {
+                              if (_statsChartModel?.data != null) {
+                                return Column(
+                                  children: [
+                                    const SizedBox(height: 40),
+                                    SizedBox(
+                                      height: _settingsProvider!.tornStatsChartShowBoth ? 400 : 200,
+                                      child: ExcludeSemantics(
+                                        child: StatsChart(
+                                          statsData: _statsChartModel,
+                                          chartType: _settingsProvider!.tornStatsChartType == "line"
+                                              ? TornStatsChartType.Line
+                                              : TornStatsChartType.Pie,
+                                          userController: _u,
+                                          callbackStatsUpdate: _profileApi.getStatsChart,
+                                          isCachedData: _statsChartIsCached,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 40),
+                                  ],
+                                );
+                              } else if (_statsChartError != null) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(Icons.bar_chart, color: Colors.red, size: 18),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        _statsChartError!,
+                                        style: TextStyle(color: _themeProvider!.getTextColor(Colors.red), fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                            }
+                            return const SizedBox(height: 20);
+                          },
+                        )
+                      else
+                        const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          children: [
+                            const Text('WORK STATS', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 5),
+                            GestureDetector(
+                              child: const Icon(Icons.copy, size: 14),
+                              onTap: () {
+                                _shareMisc(shareType: "work");
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const SizedBox(width: 100, child: Text('Manual labor: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.workStats?.manualLabor ?? 0)),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 100, child: Text('Intelligence: ')),
+                                SelectionArea(
+                                  child: Text(decimalFormat.format(_miscModel!.workStats?.intelligence ?? 0)),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const SizedBox(width: 100, child: Text('Endurance: ')),
+                                SelectionArea(child: Text(decimalFormat.format(_miscModel!.workStats?.endurance ?? 0))),
+                              ],
+                            ),
+                            SizedBox(width: 50, child: Divider(color: _themeProvider!.mainText, thickness: 0.5)),
+                            Row(
+                              children: [
+                                const SizedBox(width: 100, child: Text('Total: ')),
+                                SelectionArea(child: Text(decimalFormat.format(_miscModel!.workStats?.total ?? 0))),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (skillsExist)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 20),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 5),
+                              child: Row(
+                                children: [
+                                  const Text('SKILLS', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                  const SizedBox(width: 5),
+                                  GestureDetector(
+                                    child: const Icon(Icons.copy, size: 14),
+                                    onTap: () {
+                                      _shareMisc(shareType: "skills");
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (racing.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 80, child: Text('Racing: ')),
+                                        SelectionArea(child: Text(racing)),
+                                      ],
+                                    ),
+                                  if (reviving.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 80, child: Text('Reviving: ')),
+                                        SelectionArea(child: Text(reviving)),
+                                      ],
+                                    ),
+                                  if (hunting.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 80, child: Text('Hunting: ')),
+                                        SelectionArea(child: Text(hunting)),
+                                      ],
+                                    ),
+                                  if (crimesExist)
+                                    if (searchForCash.isNotEmpty)
+                                      const Padding(
+                                        padding: EdgeInsets.fromLTRB(0, 10, 0, 5),
+                                        child: Text('CRIMES', style: TextStyle(fontSize: 10)),
+                                      ),
+                                  Row(
+                                    children: [
+                                      const SizedBox(width: 130, child: Text('Search for Cash: ')),
+                                      SelectionArea(
+                                        child: Text(
+                                          searchForCash,
+                                          style: TextStyle(
+                                            color: searchForCash == "100"
+                                                ? _themeProvider!.getTextColor(Colors.green)
+                                                : null,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (bootlegging.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Bootlegging: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            bootlegging,
+                                            style: TextStyle(
+                                              color: bootlegging == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (graffiti.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Graffiti: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            graffiti,
+                                            style: TextStyle(
+                                              color: graffiti == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (shoplifting.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Shoplifting: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            shoplifting,
+                                            style: TextStyle(
+                                              color: shoplifting == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (pickpocketing.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Pickpocketing: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            pickpocketing,
+                                            style: TextStyle(
+                                              color: pickpocketing == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (cardSkimming.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Card Skimming: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            cardSkimming,
+                                            style: TextStyle(
+                                              color: cardSkimming == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (burglary.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Burglary: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            burglary,
+                                            style: TextStyle(
+                                              color: burglary == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (hustling.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Hustling: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            hustling,
+                                            style: TextStyle(
+                                              color: hustling == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (disposal.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Disposal: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            disposal,
+                                            style: TextStyle(
+                                              color: disposal == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (cracking.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Cracking: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            cracking,
+                                            style: TextStyle(
+                                              color: cracking == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (forgery.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Forgery: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            forgery,
+                                            style: TextStyle(
+                                              color: forgery == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (scamming.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Scamming: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            scamming,
+                                            style: TextStyle(
+                                              color: scamming == "100"
+                                                  ? _themeProvider!.getTextColor(Colors.green)
+                                                  : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (arson.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 130, child: Text('Arson: ')),
+                                        SelectionArea(
+                                          child: Text(
+                                            arson,
+                                            style: TextStyle(
+                                              color: arson == "100" ? _themeProvider!.getTextColor(Colors.green) : null,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 10),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -5006,10 +4562,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               onTapHint: 'Open wallet dialog',
               child: dense!
                   ? const Icon(Icons.account_balance_wallet_rounded, size: 17, color: Colors.brown)
-                  : const Icon(
-                      MdiIcons.cash100,
-                      color: Colors.green,
-                    ),
+                  : const Icon(MdiIcons.cash100, color: Colors.green),
             ),
           ),
           const SizedBox(width: 5),
@@ -5036,6 +4589,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     bool racingActive = false;
     bool bankActive = false;
     bool educationActive = false;
+    bool virusActive = false;
     bool propertyActive = false;
     bool donatorActive = false;
 
@@ -5068,10 +4622,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   const TextSpan(text: "You don't have a job! You can get one in the "),
                   TextSpan(
                     text: "newspaper",
-                    style: const TextStyle(
-                      color: Colors.blue,
-                      decoration: TextDecoration.underline,
-                    ),
+                    style: const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
                     recognizer: TapGestureRecognizer()
                       ..onTap = () {
                         _launchBrowser(url: 'https://www.torn.com/joblist.php#!p=main', shortTap: true);
@@ -5080,10 +4631,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   const TextSpan(text: "or in the "),
                   TextSpan(
                     text: "recruitment forum",
-                    style: const TextStyle(
-                      color: Colors.blue,
-                      decoration: TextDecoration.underline,
-                    ),
+                    style: const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
                     recognizer: TapGestureRecognizer()
                       ..onTap = () {
                         _launchBrowser(url: 'https://www.torn.com/forums.php#/p=forums&f=46&b=0&a=0', shortTap: true);
@@ -5132,12 +4680,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: <Widget>[
             Icon(MdiIcons.brain, color: brainColor),
             const SizedBox(width: 10),
-            Flexible(
-              child: Text(
-                addictionString!,
-                style: DefaultTextStyle.of(context).style,
-              ),
-            ),
+            Flexible(child: Text(addictionString!, style: DefaultTextStyle.of(context).style)),
           ],
         ),
       );
@@ -5173,12 +4716,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 children: [
                   Icon(MdiIcons.gauge, color: gaugeColor),
                   const SizedBox(width: 10),
-                  Flexible(
-                    child: Text(
-                      racingString!,
-                      style: DefaultTextStyle.of(context).style,
-                    ),
-                  ),
+                  Flexible(child: Text(racingString!, style: DefaultTextStyle.of(context).style)),
                   const SizedBox(width: 10),
                 ],
               ),
@@ -5188,15 +4726,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 InkWell(
                   borderRadius: BorderRadius.circular(100),
                   onLongPress: () {
-                    _launchBrowser(url: 'https://www.torn.com/loader.php?sid=racing', shortTap: false);
+                    _launchBrowser(url: 'https://www.torn.com/page.php?sid=racing', shortTap: false);
                   },
                   onTap: () {
-                    _launchBrowser(url: 'https://www.torn.com/loader.php?sid=racing', shortTap: true);
+                    _launchBrowser(url: 'https://www.torn.com/page.php?sid=racing', shortTap: true);
                   },
-                  child: const Padding(
-                    padding: EdgeInsets.only(left: 5),
-                    child: Icon(MdiIcons.openInApp, size: 24),
-                  ),
+                  child: const Padding(padding: EdgeInsets.only(left: 5), child: Icon(MdiIcons.openInApp, size: 24)),
                 ),
               ],
             ),
@@ -5206,10 +4741,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(100),
                   onLongPress: () {
-                    _launchBrowser(url: 'https://www.torn.com/loader.php?sid=racing', shortTap: false);
+                    _launchBrowser(url: 'https://www.torn.com/page.php?sid=racing', shortTap: false);
                   },
                   onTap: () {
-                    _launchBrowser(url: 'https://www.torn.com/loader.php?sid=racing', shortTap: true);
+                    _launchBrowser(url: 'https://www.torn.com/page.php?sid=racing', shortTap: true);
                   },
                   child: Padding(
                     padding: const EdgeInsets.only(left: 5),
@@ -5230,10 +4765,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (_settingsProvider!.playerInOCv2 && _oc2Model != null) {
       factionCrimes = Semantics(
         explicitChildNodes: true,
-        child: OrganizedCrimeWidget(
-          crimeResponse: _oc2Model!,
-          playerId: UserHelper.playerId,
-        ),
+        child: OrganizedCrimeWidget(crimeResponse: _oc2Model!, playerId: UserHelper.playerId),
       );
 
       if (factionCrimes != const SizedBox.shrink()) {
@@ -5256,8 +4788,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   style: TextStyle(
                     color: _ocComplexReady
                         ? _ocComplexPeopleNotReady == 0
-                            ? Colors.green
-                            : Colors.orange[700]
+                              ? Colors.green
+                              : Colors.orange[700]
                         : _themeProvider!.mainText,
                   ),
                 ),
@@ -5271,10 +4803,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   onTap: () {
                     _launchBrowser(url: 'https://www.torn.com/factions.php?step=your#/tab=crimes', shortTap: true);
                   },
-                  child: const Padding(
-                    padding: EdgeInsets.only(right: 5),
-                    child: Icon(MdiIcons.openInApp, size: 18),
-                  ),
+                  child: const Padding(padding: EdgeInsets.only(right: 5), child: Icon(MdiIcons.openInApp, size: 18)),
                 ),
             ],
           ),
@@ -5302,10 +4831,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   onTap: () {
                     _launchBrowser(url: 'https://www.torn.com/factions.php?step=your#/tab=crimes', shortTap: true);
                   },
-                  child: const Padding(
-                    padding: EdgeInsets.only(right: 5),
-                    child: Icon(MdiIcons.openInApp, size: 18),
-                  ),
+                  child: const Padding(padding: EdgeInsets.only(right: 5), child: Icon(MdiIcons.openInApp, size: 18)),
                 ),
               GestureDetector(
                 child: Icon(
@@ -5319,9 +4845,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     context: context,
                     barrierDismissible: true,
                     builder: (BuildContext context) {
-                      return DisregardCrimeDialog(
-                        disregardCallback: _disregardCrimeCallback,
-                      );
+                      return DisregardCrimeDialog(disregardCallback: _disregardCrimeCallback);
                     },
                   );
                 },
@@ -5389,7 +4913,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                )
+                ),
               ],
             ),
           );
@@ -5445,9 +4969,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       text: "Your course: ",
                       style: DefaultTextStyle.of(context).style,
                       children: <TextSpan>[
-                        TextSpan(
-                          text: "$courseName",
-                        ),
+                        TextSpan(text: "$courseName"),
                         const TextSpan(text: ", will end in "),
                         TextSpan(
                           text: expiryString,
@@ -5456,7 +4978,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                )
+                ),
               ],
             ),
           );
@@ -5477,10 +4999,64 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   "You are not enrolled in any education course!",
                   style: TextStyle(color: _themeProvider!.getTextColor(Colors.red[500])),
                 ),
-              )
+              ),
             ],
           );
         }
+      }
+    }
+
+    // VIRUS
+    Widget virusWidget = const SizedBox.shrink();
+
+    if (_virusModel != null) {
+      final timeExpiry = DateTime.fromMillisecondsSinceEpoch(_virusModel!.until * 1000);
+      final timeDifference = timeExpiry.difference(DateTime.now());
+
+      if (!timeDifference.isNegative) {
+        showMisc = true;
+        virusActive = true;
+        Color? expiryColor = Colors.orange[800];
+        String expiryString;
+        if (timeDifference.inHours < 1) {
+          expiryString = 'less than an hour';
+        } else if (timeDifference.inHours == 1 && timeDifference.inDays < 1) {
+          expiryString = 'about an hour';
+        } else if (timeDifference.inHours > 1 && timeDifference.inDays < 1) {
+          expiryString = '${timeDifference.inHours} hours';
+        } else if (timeDifference.inDays == 1) {
+          expiryString = '1 day';
+          expiryColor = _themeProvider!.mainText;
+        } else {
+          expiryString = '${timeDifference.inDays} days';
+          expiryColor = _themeProvider!.mainText;
+        }
+
+        virusWidget = Semantics(
+          explicitChildNodes: true,
+          child: Row(
+            children: <Widget>[
+              const Icon(MdiIcons.bug),
+              const SizedBox(width: 10),
+              Flexible(
+                child: RichText(
+                  text: TextSpan(
+                    text: "Your virus: ",
+                    style: DefaultTextStyle.of(context).style,
+                    children: <TextSpan>[
+                      TextSpan(text: _virusModel!.item.name),
+                      const TextSpan(text: ", will finish coding in "),
+                      TextSpan(
+                        text: expiryString,
+                        style: TextStyle(color: expiryColor),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
       }
     }
 
@@ -5510,12 +5086,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: <Widget>[
             const Icon(MdiIcons.starOutline),
             const SizedBox(width: 10),
-            Flexible(
-              child: Text(
-                donatorString!,
-                style: DefaultTextStyle.of(context).style,
-              ),
-            ),
+            Flexible(child: Text(donatorString!, style: DefaultTextStyle.of(context).style)),
           ],
         ),
       );
@@ -5540,52 +5111,27 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     child: Text(
                       'MISC',
                       semanticsLabel: "",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ),
                   if (joblessActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: joblessWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: joblessWidget),
                   if (addictionActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: addictionWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: addictionWidget),
                   if (racingActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: racingWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: racingWidget),
                   if (factionCrimesActive && _settingsProvider!.oCrimesEnabled)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: factionCrimes,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: factionCrimes),
                   if (bankActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: bankWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: bankWidget),
                   if (educationActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: educationWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: educationWidget),
+                  if (virusActive)
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: virusWidget),
                   if (propertyActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: _rentedPropertiesWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: _rentedPropertiesWidget),
                   if (donatorActive)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5),
-                      child: donatorWidget,
-                    ),
+                    Padding(padding: const EdgeInsets.only(left: 8, top: 5, bottom: 5), child: donatorWidget),
                 ],
               ),
             ),
@@ -5613,10 +5159,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
     final timestamp = DateTime.fromMillisecondsSinceEpoch(_user!.networth!['timestamp']!.round() * 1000);
     final formattedTimestamp = TimeFormatter(
-            inputTime: timestamp,
-            timeFormatSetting: _settingsProvider!.currentTimeFormat,
-            timeZoneSetting: _settingsProvider!.currentTimeZone)
-        .formatHourWithDaysElapsed(includeYesterday: true);
+      inputTime: timestamp,
+      timeFormatSetting: _settingsProvider!.currentTimeFormat,
+      timeZoneSetting: _settingsProvider!.currentTimeZone,
+    ).formatHourWithDaysElapsed(includeYesterday: true);
 
     // Loop all other sources
     for (final v in _user!.networth!.entries) {
@@ -5647,13 +5193,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         if (points != null && points > 0) {
           String price = formatBigNumbers(((v.value!.round()) / points).round());
 
-          pointsPrice = Text(
-            " @ \$$price",
-            style: const TextStyle(
-              fontSize: 11,
-              fontStyle: FontStyle.italic,
-            ),
-          );
+          pointsPrice = Text(" @ \$$price", style: const TextStyle(fontSize: 11, fontStyle: FontStyle.italic));
         }
       }
 
@@ -5664,10 +5204,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             children: [
               Semantics(
                 label: "$source, ${moneyFormat.format(v.value!.round())}",
-                child: Text(
-                  source,
-                  semanticsLabel: "",
-                ),
+                child: Text(source, semanticsLabel: ""),
               ),
               pointsPrice,
             ],
@@ -5697,19 +5234,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Total: ',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                const Text('Total: ', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 ...moneySources,
                 const SizedBox(height: 10),
-                const Text('Updated at: ',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ))
+                const Text('Updated at: ', style: TextStyle(fontWeight: FontWeight.bold)),
               ],
             ),
             Column(
@@ -5727,13 +5256,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 const SizedBox(height: 10),
                 ...moneyQuantities,
                 const SizedBox(height: 10),
-                Text(
-                  formattedTimestamp,
-                  style: TextStyle(
-                    color: _themeProvider!.mainText,
-                    fontSize: 12,
-                  ),
-                ),
+                Text(formattedTimestamp, style: TextStyle(color: _themeProvider!.mainText, fontSize: 12)),
               ],
             ),
           ],
@@ -5750,13 +5273,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           header: const Padding(
             padding: EdgeInsets.all(15.0),
             child: ExcludeSemantics(
-              child: Text(
-                'NETWORTH',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              child: Text('NETWORTH', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ),
           collapsed: Padding(
@@ -5767,8 +5284,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color:
-                    total <= 0 ? _themeProvider!.getTextColor(Colors.red) : _themeProvider!.getTextColor(Colors.green),
+                color: total <= 0
+                    ? _themeProvider!.getTextColor(Colors.red)
+                    : _themeProvider!.getTextColor(Colors.green),
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -5779,656 +5297,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _fetchApi() async {
-    if (!mounted) return;
-
-    // Try to get only as many messages as strictly necessary, as per Torn recommendations
-    var limit = 3;
-    if (_messagesShowNumber! > limit) limit = _messagesShowNumber!;
-    if (_eventsShowNumber! > limit) limit = _eventsShowNumber!;
-
-    final apiResponse = await ApiCallsV1.getOwnProfileExtended(limit: limit);
-
-    // Try to get the chain from the ChainStatusProvider if it's running (to save calls)
-    // Otherwise, call the API
-    dynamic chain;
-
-    if (_chainController.chainModel is ChainModel) {
-      chain = _chainController.chainModel;
-    } else {
-      chain = await ApiCallsV1.getChainStatus();
-    }
-
-    if (mounted) {
-      setState(() {
-        if (apiResponse is OwnProfileExtended) {
-          _apiRetries = 0;
-          _user = apiResponse;
-          _serverTime = DateTime.fromMillisecondsSinceEpoch(_user!.serverTime! * 1000);
-          _apiGoodData = true;
-
-          // If max values have decreased or were never initialized
-          if (_customEnergyTrigger! > _user!.energy!.maximum! || _customEnergyTrigger == 0) {
-            _customEnergyTrigger = _user!.energy!.maximum;
-            Prefs().setEnergyNotificationValue(_customEnergyTrigger!);
-          }
-          if (_customNerveTrigger! > _user!.nerve!.maximum! || _customNerveTrigger == 0) {
-            _customNerveTrigger = _user!.nerve!.maximum;
-            Prefs().setNerveNotificationValue(_customNerveTrigger!);
-          }
-
-          if (chain is ChainModel) {
-            _chainModel = chain;
-          } else {
-            // Default to empty chain, with all parameters at 0
-            _chainModel = ChainModel();
-            _chainModel.chain = ChainDetails();
-          }
-
-          if (apiResponse.status != null && apiResponse.travel != null) {
-            // Signal that we are updating from the profile page
-            _chainController.statusUpdateSource = "profile";
-
-            // We need to adapt Status and Travel models to the BarsModel
-            bars_model.Status chainStatusModel = bars_model.Status()
-              ..color = apiResponse.status!.color
-              ..description = apiResponse.status!.description
-              ..details = apiResponse.status!.details
-              ..state = apiResponse.status!.state
-              ..until = apiResponse.status!.until;
-
-            bars_model.Travel chainTravelModel = bars_model.Travel()
-              ..departed = apiResponse.travel!.departed
-              ..destination = apiResponse.travel!.destination
-              ..departed = apiResponse.travel!.departed
-              ..timeLeft = apiResponse.travel!.timeLeft
-              ..timestamp = apiResponse.travel!.timestamp;
-
-            bars_model.BarsStatusCooldownsModel externalStatusModel = bars_model.BarsStatusCooldownsModel()
-              ..status = chainStatusModel
-              ..travel = chainTravelModel;
-
-            _chainController.getOrSetStatus(externalStatusModel: externalStatusModel);
-          }
-
-          if (apiResponse.faction?.factionId != null && apiResponse.faction!.factionId! > 0) {
-            _u.factionId = apiResponse.faction!.factionId!;
-          }
-
-          if (apiResponse.job?.companyId != null && apiResponse.job!.companyId! > 0) {
-            _u.companyId = apiResponse.job!.companyId!;
-          }
-
-          _checkIfNotificationsAreCurrent();
-        } else {
-          if (_apiGoodData && _apiRetries < 8) {
-            _apiRetries++;
-          } else {
-            _apiGoodData = false;
-            _apiError = apiResponse as ApiError?;
-            _apiRetries = 0;
-          }
-        }
-      });
-    }
-
-    // We get other kind of information separately once per minute and onResumed
-    // As part of MiscCardInfo()
-    //  - (sync) Education, money and skills with miscInfo call
-    //  - (async) OC Crimes (both types) with AA call or from events
-    //  - (async) Bazaar
-    //  - (async) RankedWars
-    if (_apiGoodData && !_miscApiFetchedOnce) {
-      await _getMiscCardInfo();
-      _statsChartDataFetched = _getStatsChart();
-      _getRankedWars();
-      _getCompanyAddiction();
-      _refreshEvents();
-    }
-
-    _retrievePendingNotifications();
-  }
-
-  Future _getMiscCardInfo({bool forcedUpdate = false}) async {
-    if (_user == null) return;
-
-    try {
-      dynamic miscApiResponse;
-
-      // 1.- Try first with API V2
-      miscApiResponse = await ApiCallsV2.getUserProfileMisc_v2();
-
-      if (miscApiResponse is! OwnProfileMisc) {
-        return;
-      }
-
-      // Get Education
-      var education = await ApiCallsV1.getEducation();
-      if (education != null) {
-        _tornEducationModel = education;
-      }
-
-      // Get Market Items V2
-      var marketItems = await _getUserMarketItems();
-      if (marketItems != null) {
-        _marketItemsV2 = marketItems;
-      }
-
-      // Get this async
-      if (_settingsProvider!.oCrimesEnabled) {
-        if (_settingsProvider!.playerInOCv2) {
-          _getFactionCrimesV2();
-        } else {
-          _getFactionCrimesV1();
-        }
-      }
-
-      _checkProperties(miscApiResponse, forcedUpdate);
-
-      setState(() {
-        _miscModel = miscApiResponse;
-        _miscApiFetchedOnce = true;
-      });
-    } catch (e) {
-      // If something fails, we simple don't show the MISC section
-    }
-  }
-
-  Future<dynamic> _getUserMarketItems() async {
-    try {
-      return await ApiCallsV2.getUserMarketItemsApi_v2();
-    } catch (e, t) {
-      log("Issue getting market items: $e, $t");
-    }
-  }
-
-  Future _getStatsChart() async {
-    Future<void> loadFromCacheOrError(String errorMsg, {bool forceShow = false}) async {
-      final savedChart = await Prefs().getTornStatsChartSave();
-      if (savedChart.isNotEmpty) {
-        setState(() {
-          _statsChartModel = statsChartTornStatsFromJson(savedChart);
-          _statsChartIsCached = true;
-          _statsChartError = null;
-        });
-      } else {
-        setState(() {
-          String errorStr = errorMsg;
-          if (!forceShow && errorStr.length > 20) {
-            errorStr = '${errorStr.substring(0, 20)}...';
-          }
-          _statsChartError = "Torn Stats chart error: $errorStr";
-        });
-      }
-    }
-
-    try {
-      if (!_settingsProvider!.tornStatsChartEnabled) return;
-
-      final DateTime lastFetched = DateTime.fromMillisecondsSinceEpoch(_settingsProvider!.tornStatsChartDateTime);
-
-      if (DateTime.now().difference(lastFetched).inHours < 26) {
-        final savedChart = await Prefs().getTornStatsChartSave();
-        if (savedChart.isNotEmpty) {
-          setState(() {
-            _statsChartModel = statsChartTornStatsFromJson(savedChart);
-            _statsChartIsCached = true;
-            _statsChartError = null;
-          });
-          return;
-        }
-      }
-
-      final String tornStatsURL = 'https://www.tornstats.com/api/v1/${_u.alternativeTornStatsKey}/battlestats/graph';
-      final resp = await http.get(Uri.parse(tornStatsURL)).timeout(const Duration(seconds: 5));
-      if (resp.statusCode == 200) {
-        final StatsChartTornStats statsJson = statsChartTornStatsFromJson(resp.body);
-        if (!statsJson.message!.contains("ERROR")) {
-          setState(() {
-            _statsChartModel = statsJson;
-            _statsChartIsCached = false;
-            _statsChartError = null;
-          });
-
-          Prefs().setTornStatsChartSave(resp.body);
-          _settingsProvider!.setTornStatsChartDateTime = DateTime.now().millisecondsSinceEpoch;
-        } else {
-          await loadFromCacheOrError(statsJson.message ?? "Unknown");
-        }
-      } else {
-        String errorMsg;
-        bool forceShow = false;
-        if (resp.statusCode == 404 && resp.body.contains("User not found")) {
-          errorMsg = "User not found. Please check your Torn Stats API Key in Settings > Alternative Keys, "
-              "or disable the Torn Stats chart entirely by using the gear icon at the top of this section";
-          forceShow = true;
-        } else {
-          switch (resp.statusCode) {
-            case 401:
-            case 403:
-              errorMsg = "unauthorized";
-              break;
-            case 404:
-              errorMsg = "server not found";
-              break;
-            case 500:
-            case 502:
-            case 503:
-            case 504:
-              errorMsg = "server error";
-              break;
-            default:
-              errorMsg = "HTTP ${resp.statusCode}";
-          }
-        }
-        await loadFromCacheOrError(errorMsg, forceShow: forceShow);
-      }
-    } catch (e) {
-      if (e is TimeoutException) {
-        await loadFromCacheOrError("connection timed out");
-      } else {
-        await loadFromCacheOrError(e.toString());
-      }
-    }
-  }
-
-  Future _getRankedWars() async {
-    if (_user == null) return;
-
-    // DEBUG #####
-    /*
-    // Create a fake ranked war to check time parameters
-    if (kDebugMode) {
-      RankedWar debugWar = RankedWar(
-        factions: {
-          _user!.faction!.factionId.toString(): WarFaction()
-            ..chain = 0
-            ..name = _user!.faction!.factionName
-            ..score = 0,
-          _user!.faction!.factionId.toString(): WarFaction()
-            ..chain = 0
-            ..name = _user!.faction!.factionName
-            ..score = 0,
-        },
-        war: War(
-          start: (DateTime(2024, 4, 2, 20, 0).millisecondsSinceEpoch / 1000).round(),
-          end: 0,
-          target: 2000,
-          winner: 0,
-        ),
-      );
-      setState(() {
-        _factionRankedWar = debugWar;
-      });
-      return;
-    }
-    */
-    // DEBUG ENDS #####
-
-    try {
-      if (_user!.faction!.factionId == 0) return;
-      if (!_settingsProvider!.rankedWarsInProfile) return;
-
-      final dynamic apiResponse = await ApiCallsV1.getRankedWars();
-      if (apiResponse is RankedWarsModel) {
-        for (final warMap in apiResponse.rankedwars!.entries) {
-          if (warMap.value.factions!.keys.contains(_user!.faction!.factionId.toString())) {
-            final int ts = DateTime.now().millisecondsSinceEpoch;
-            final bool warInFuture = warMap.value.war!.start! * 1000 > ts;
-            final bool warActive = warMap.value.war!.start! < ts && warMap.value.war!.end == 0;
-            if (warInFuture || warActive) {
-              setState(() {
-                _factionRankedWar = warMap.value;
-              });
-            }
-            return;
-          }
-        }
-      }
-    } catch (e) {
-      // Returns null
-    }
-    _factionRankedWar = null;
-    return;
-  }
-
-  Future _getCompanyAddiction() async {
-    if (_user == null) return;
-
-    try {
-      if (_user!.job!.companyId == 0) return;
-
-      final nextFetchTime = await Prefs().getJobAddictionNextCallTime();
-
-      final int currentTimeMillis = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final bool shouldCallApi = currentTimeMillis >= nextFetchTime;
-
-      // If we should call the API, fetch the data and update SharedPreferences
-      if (shouldCallApi || nextFetchTime == 0) {
-        log("Fetching job addiction!");
-        final dynamic apiResponse = await ApiCallsV1.getCompanyEmployees();
-        if (apiResponse is CompanyEmployees) {
-          for (final eMap in apiResponse.companyEmployees!.entries) {
-            // Loop until we find the user
-            if (eMap.key != _user!.playerId.toString()) continue;
-
-            // Calculate the next allowed API call time
-            final DateTime now = DateTime.now().toUtc();
-            DateTime nextAllowedTime = DateTime.utc(now.year, now.month, now.day, 18, 30);
-            if (now.isAfter(nextAllowedTime)) {
-              nextAllowedTime = nextAllowedTime.add(const Duration(days: 1));
-            }
-            final int nextAllowedTimeMillis = nextAllowedTime.millisecondsSinceEpoch;
-
-            Prefs().setJobAddictionNextCallTime(nextAllowedTimeMillis);
-            Prefs().setJobAdditionValue(eMap.value.effectiveness!.addiction ?? 0);
-            setState(() {
-              _companyAddiction = eMap.value.effectiveness!.addiction ?? 0;
-            });
-            return;
-          }
-        }
-      } else {
-        final int savedAddition = await Prefs().getJobAddictionValue();
-        setState(() {
-          _companyAddiction = savedAddition;
-        });
-      }
-    } catch (e) {
-      _companyAddiction = null;
-      return;
-    }
-  }
-
-  /// To be restrictive with API calls, we will only perform a full events update if > 30 minutes from last
-  /// In between, we will only update new events from X timestamp
-  Future _refreshEvents() async {
-    try {
-      // Get the saved events from shared prefs
-      List<Event> eventsSave = <Event>[];
-      List<String> save = await Prefs().getEventsSave();
-      for (final s in save) {
-        eventsSave.add(eventFromJson(s));
-      }
-
-      // Calculate time difference from last time we obtained events
-      final DateTime lastEventsTs = DateTime.fromMillisecondsSinceEpoch(await Prefs().getEventsLastRetrieved());
-      int minutesDiff = DateTime.now().difference(lastEventsTs).inMinutes;
-
-      // ### DEBUG ###
-      /*
-      if (kDebugMode) {
-        minutesDiff = 30;
-      } else if (minutesDiff < 0) {
-        minutesDiff = 30;
-      }
-      */
-      // #############
-
-      // If less than 30 minutes have elapse, we'll just query for new events and fill the list
-      if (minutesDiff < 30 && eventsSave.isNotEmpty) {
-        // Get the last saved event, find out what's the TS
-        if (eventsSave.isEmpty) return;
-        int? lastTs = eventsSave[0].timestamp;
-
-        // Get new events after that and add them
-        final dynamic newEventsResponse = await ApiCallsV1.getEvents(limit: 100, from: lastTs);
-        if (newEventsResponse is List<Event>) {
-          if (newEventsResponse.isNotEmpty) {
-            for (int i = 0; i < newEventsResponse.length; i++) {
-              bool repeated = false;
-              for (final Event inSave in eventsSave) {
-                if (newEventsResponse[i].event == inSave.event && newEventsResponse[i].timestamp == inSave.timestamp) {
-                  repeated = true;
-                  break;
-                }
-              }
-              // Avoid events repetition (even adding 1 ms to lastTs didn't help)
-              if (!repeated) {
-                eventsSave.insert(i, newEventsResponse[i]);
-              }
-            }
-
-            List<String> eventsListToSave = [];
-            for (final Event e in eventsSave) {
-              eventsListToSave.add(eventToJson(e));
-            }
-            Prefs().setEventsSave(eventsListToSave);
-          }
-          // Save last retrieved date as now
-          Prefs().setEventsLastRetrieved(DateTime.now().millisecondsSinceEpoch);
-        }
-
-        // Refresh events (even if no additions have been made, as we might be starting
-        // the app with [_events] with a null value)
-        if (mounted) {
-          setState(() {
-            _events = List<Event>.from(eventsSave);
-          });
-        }
-        return;
-      }
-
-      // If more than 30 minutes elapsed, we get the whole pack
-      // Calculate one month ago
-      log("Events save elapse more than 30 minutes, getting all events");
-      final int monthAgo = ((DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch) / 1000).ceil();
-      final dynamic allEventsResponse = await ApiCallsV1.getEvents(limit: 100, from: monthAgo);
-      if (allEventsResponse is List<Event>) {
-        // Save events and last retrieved timestamp
-        List<String> eventsListToSave = [];
-        for (final Event e in allEventsResponse) {
-          eventsListToSave.add(eventToJson(e));
-        }
-        Prefs().setEventsSave(eventsListToSave);
-        Prefs().setEventsLastRetrieved(DateTime.now().millisecondsSinceEpoch);
-
-        // Refresh events
-        if (mounted) {
-          setState(() {
-            _events = List<Event>.from(allEventsResponse);
-          });
-        }
-      } else {
-        // In case of error, return what's saved
-        if (mounted) {
-          setState(() {
-            _events = List<Event>.from(eventsSave);
-          });
-        }
-      }
-    } catch (e, trace) {
-      logToUser("PDA Error at Profile Events: $e, $trace");
-      if (!Platform.isWindows) FirebaseCrashlytics.instance.log("PDA Crash at Profile Events");
-      if (!Platform.isWindows) FirebaseCrashlytics.instance.recordError("PDA Error: $e", trace);
-    }
-  }
-
-  Future<void> _getFactionCrimesV1() async {
-    // If we are in OCv2, we don't need to get v1 crimes
-    if (_settingsProvider!.playerInOCv2) return;
-
-    try {
-      if (_user == null) return;
-      final factionCrimes = await ApiCallsV1.getFactionCrimes(playerId: _user!.playerId.toString());
-
-      // OPTION 1 - Check if we have faction access
-      if (factionCrimes != null && factionCrimes is FactionCrimesModel) {
-        String? complexString = "";
-        DateTime complexTime = DateTime.now();
-
-        // Get main crime and time
-        factionCrimes.crimes!.forEach((key, crime) {
-          if (crime.initiated == 0 && complexString!.isEmpty) {
-            var participantsNotReady = 0;
-            for (final participant in crime.participants!) {
-              // There is only one participant, but in another map
-              participant.forEach((key, values) {
-                if (values?.description != "Okay") {
-                  participantsNotReady++;
-                }
-              });
-
-              if (participant.containsKey(UserHelper.playerId.toString())) {
-                complexString = crime.crimeName;
-                complexTime = DateTime.fromMillisecondsSinceEpoch(crime.timeReady! * 1000);
-              }
-            }
-
-            // If found our crime, assign final number of participants not ready
-            if (complexString!.isNotEmpty) _ocComplexPeopleNotReady = participantsNotReady;
-          }
-        });
-
-        // Calculate time and final string for widgets
-        if (complexString!.isNotEmpty) {
-          bool complexReady = false;
-          String complexTimeString = "";
-          if (complexTime.isAfter(DateTime.now())) {
-            final formattedTime = TimeFormatter(
-              inputTime: complexTime,
-              timeFormatSetting: _settingsProvider!.currentTimeFormat,
-              timeZoneSetting: _settingsProvider!.currentTimeZone,
-            ).formatHourWithDaysElapsed();
-            complexTimeString =
-                "OC will be ready @ $formattedTime${_timeFormatted(complexTime, previous: formattedTime)}";
-          } else {
-            complexReady = true;
-            if (_ocComplexPeopleNotReady == 0) {
-              complexTimeString = "OC and all participants are ready!";
-            } else if (_ocComplexPeopleNotReady == 1) {
-              complexTimeString = "OC is ready, but 1 participant is not!";
-            } else {
-              complexTimeString = "OC is ready, but $_ocComplexPeopleNotReady participants are not!";
-            }
-          }
-
-          if (!mounted) return;
-
-          setState(() {
-            _ocFinalStringLong = "$complexString $complexTimeString";
-            _ocFinalStringShort = complexTimeString;
-            _ocComplexReady = complexReady;
-            _ocTime = complexTime;
-          });
-
-          return;
-        }
-      }
-
-      // OPTION 2 - Could indicate that we have no AA access, so we are looking for events!
-      if (factionCrimes == null || factionCrimes is ApiError || _ocFinalStringLong.isEmpty) {
-        bool simpleExists = false;
-        DateTime simpleTime = DateTime.now();
-        String simpleString = "";
-        bool simpleReady = false;
-
-        void calculateSimpleReadiness() {
-          if (simpleTime.isBefore(DateTime.now())) {
-            simpleReady = true;
-            simpleString = "A faction organized crime might be ready!";
-          } else {
-            final formattedTime = TimeFormatter(
-              inputTime: simpleTime,
-              timeFormatSetting: _settingsProvider!.currentTimeFormat,
-              timeZoneSetting: _settingsProvider!.currentTimeZone,
-            ).formatHourWithDaysElapsed();
-            simpleString = "A faction organized crime will be ready @ "
-                "$formattedTime${_timeFormatted(simpleTime, previous: formattedTime)}";
-          }
-        }
-
-        // Try to find quick crimes in events
-        bool foundExpired = false;
-        bool foundProgress = false;
-        bool error = false;
-
-        // Try to find our crime by reviewing the last 100 events. The first one we
-        // can find is the one that counts
-        for (final Event e in _events) {
-          if (!foundExpired && !foundProgress && !error) {
-            if (e.event!.contains("You and your team") ||
-                (e.event!.contains("canceled the") && e.event!.contains("that you were selected for"))) {
-              foundExpired = true;
-            } else if (e.event!.contains("You have been selected")) {
-              final RegExp strRaw = RegExp("([0-9]+) hours");
-              final matches = strRaw.allMatches(e.event!);
-              if (matches.isNotEmpty) {
-                for (final match in matches) {
-                  final hoursString = match.group(1)!;
-                  try {
-                    final hours = int.parse(hoursString);
-                    simpleTime = DateTime.fromMillisecondsSinceEpoch(e.timestamp! * 1000).add(Duration(hours: hours));
-                    foundProgress = true;
-                    simpleExists = true;
-                    _settingsProvider!.changeOCrimeLastKnown = simpleTime.millisecondsSinceEpoch;
-                    calculateSimpleReadiness();
-                  } catch (e) {
-                    foundExpired = false;
-                    foundProgress = false;
-                    error = true;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // If we haven't found anything in 100 events (including no cancellations), but we are still
-        // ahead of the last known planned OC crime time, perhaps we run out of events (some OC
-        // take place after 8 days). If that's the case, show that one anyway.
-        if (!foundProgress && !foundExpired && !error) {
-          final lastKnown = DateTime.fromMillisecondsSinceEpoch(_settingsProvider!.oCrimeLastKnown);
-          if (DateTime.now().isBefore(lastKnown)) {
-            simpleExists = true;
-            simpleTime = lastKnown;
-            foundProgress = true;
-            calculateSimpleReadiness();
-          }
-        }
-
-        // Check if we were disregarding this crime before (in which case we don't show it)
-        if (foundProgress) {
-          if (_settingsProvider!.oCrimeDisregarded == simpleTime.millisecondsSinceEpoch) {
-            simpleExists = false;
-            _ocSimpleStringFinal = "";
-          }
-        }
-
-        if (!mounted) return;
-
-        setState(() {
-          _ocSimpleExists = simpleExists;
-          _ocSimpleReady = simpleReady;
-          _ocSimpleStringFinal = simpleString;
-          _ocTime = simpleTime;
-        });
-      }
-    } catch (e) {
-      // Don't fill anything
-      log(e.toString());
-    }
-  }
-
-  Future<void> _getFactionCrimesV2() async {
-    // If we are in OCv1, we don't need to get v2 crimes
-    if (!_settingsProvider!.playerInOCv2) return;
-    if (UserHelper.factionId == 0) return;
-
-    final dynamic apiResponse = await ApiCallsV2.getUserOC2Crime_v2();
-    if (apiResponse != null) {
-      final crime = apiResponse as UserOrganizedCrimeResponse;
-      setState(() {
-        _oc2Model = crime;
-      });
-    }
-  }
-
   SpeedDial buildSpeedDial() {
     return SpeedDial(
       animationDuration: const Duration(),
-      direction:
-          MediaQuery.orientationOf(context) == Orientation.portrait ? SpeedDialDirection.up : SpeedDialDirection.left,
+      direction: MediaQuery.orientationOf(context) == Orientation.portrait
+          ? SpeedDialDirection.up
+          : SpeedDialDirection.left,
       backgroundColor: Colors.transparent,
       overlayColor: Colors.transparent,
       curve: Curves.bounceIn,
@@ -6448,17 +5322,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             width: 100,
             height: 100,
             color: Colors.transparent,
-            child: const Icon(
-              MdiIcons.cityVariantOutline,
-              color: Colors.black,
-            ),
+            child: const Icon(MdiIcons.cityVariantOutline, color: Colors.black),
           ),
           backgroundColor: Colors.purple[500],
           label: 'CITY',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.purple[500],
         ),
         SpeedDialChild(
@@ -6474,17 +5342,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             width: 100,
             height: 100,
             color: Colors.transparent,
-            child: const Icon(
-              MdiIcons.accountSwitchOutline,
-              color: Colors.black,
-            ),
+            child: const Icon(MdiIcons.accountSwitchOutline, color: Colors.black),
           ),
           backgroundColor: Colors.yellow[800],
           label: 'TRADES',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.yellow[800],
         ),
         SpeedDialChild(
@@ -6500,17 +5362,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             width: 100,
             height: 100,
             color: Colors.transparent,
-            child: const Icon(
-              Icons.card_giftcard,
-              color: Colors.black,
-            ),
+            child: const Icon(Icons.card_giftcard, color: Colors.black),
           ),
           backgroundColor: Colors.blue[400],
           label: 'ITEMS',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.blue[400],
         ),
         SpeedDialChild(
@@ -6527,20 +5383,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             height: 100,
             color: Colors.transparent,
             child: Center(
-              child: Image.asset(
-                'images/icons/ic_pistol_black_48dp.png',
-                width: 25,
-                height: 25,
-                color: Colors.black,
-              ),
+              child: Image.asset('images/icons/ic_pistol_black_48dp.png', width: 25, height: 25, color: Colors.black),
             ),
           ),
           backgroundColor: Colors.deepOrange[400],
           label: 'CRIMES',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.deepOrange[400],
         ),
         SpeedDialChild(
@@ -6556,17 +5404,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             width: 100,
             height: 100,
             color: Colors.transparent,
-            child: const Icon(
-              Icons.fitness_center,
-              color: Colors.black,
-            ),
+            child: const Icon(Icons.fitness_center, color: Colors.black),
           ),
           backgroundColor: Colors.green[400],
           label: 'GYM',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.green[400],
         ),
         SpeedDialChild(
@@ -6582,17 +5424,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             width: 100,
             height: 100,
             color: Colors.transparent,
-            child: const Icon(
-              Icons.home_outlined,
-              color: Colors.black,
-            ),
+            child: const Icon(Icons.home_outlined, color: Colors.black),
           ),
           backgroundColor: Colors.grey[400],
           label: 'HOME',
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.black,
-          ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w500, color: Colors.black),
           labelBackgroundColor: Colors.grey[400],
         ),
       ],
@@ -6600,15 +5436,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         width: 58,
         height: 58,
         decoration: BoxDecoration(
-          border: Border.all(
-            color: Colors.grey[800]!,
-            width: 2,
-          ),
+          border: Border.all(color: Colors.grey[800]!, width: 2),
           shape: BoxShape.circle,
-          image: const DecorationImage(
-            fit: BoxFit.fill,
-            image: AssetImage("images/icons/torn_t_logo.png"),
-          ),
+          image: const DecorationImage(fit: BoxFit.fill, image: AssetImage("images/icons/torn_t_logo.png")),
         ),
       ),
     );
@@ -6631,11 +5461,11 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     // In turn, we only call the API every 30 seconds with the timer
     await Future.delayed(const Duration(seconds: 5));
     if (mounted) {
-      _fetchApi();
+      _profileApi.fetchApi(trigger: "button-callback");
     }
     await Future.delayed(const Duration(seconds: 10));
     if (mounted) {
-      _fetchApi();
+      _profileApi.fetchApi(trigger: "button-callback");
     }
   }
 
@@ -6661,8 +5491,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual travel';
         channelDescription = 'Manual notifications for travel';
         notificationTitle = _settingsProvider!.discreetNotifications ? "T" : await Prefs().getTravelNotificationTitle();
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? " " : await Prefs().getTravelNotificationBody();
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? " "
+            : await Prefs().getTravelNotificationBody();
         notificationPayload += 'travel';
         notificationIconAndroid = "notification_travel";
         notificationIconColor = Colors.blue;
@@ -6709,8 +5540,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual drugs';
         channelDescription = 'Manual notifications for drugs';
         notificationTitle = _settingsProvider!.discreetNotifications ? "D" : 'Drug Cooldown';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "Exp" : 'Here is your drugs cooldown reminder!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "Exp"
+            : 'Here is your drugs cooldown reminder!';
         final myTimeStamp = (DateTime.now().millisecondsSinceEpoch / 1000).floor() + _user!.cooldowns!.drug!;
         notificationPayload += '${profileNotification.string}-$myTimeStamp';
         notificationIconAndroid = "notification_drugs";
@@ -6722,8 +5554,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual medical';
         channelDescription = 'Manual notifications for medical';
         notificationTitle = _settingsProvider!.discreetNotifications ? "Med" : 'Medical Cooldown';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "Exp" : 'Here is your medical cooldown reminder!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "Exp"
+            : 'Here is your medical cooldown reminder!';
         final myTimeStamp = (DateTime.now().millisecondsSinceEpoch / 1000).floor() + _user!.cooldowns!.medical!;
         notificationPayload += '${profileNotification.string}-$myTimeStamp';
         notificationIconAndroid = "notification_medical";
@@ -6735,8 +5568,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual booster';
         channelDescription = 'Manual notifications for booster';
         notificationTitle = _settingsProvider!.discreetNotifications ? "B" : 'Booster Cooldown';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "Exp" : 'Here is your booster cooldown reminder!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "Exp"
+            : 'Here is your booster cooldown reminder!';
         final myTimeStamp = (DateTime.now().millisecondsSinceEpoch / 1000).floor() + _user!.cooldowns!.booster!;
         notificationPayload += '${profileNotification.string}-$myTimeStamp';
         notificationIconAndroid = "notification_booster";
@@ -6748,8 +5582,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual hospital';
         channelDescription = 'Manual notifications for hospital';
         notificationTitle = _settingsProvider!.discreetNotifications ? "H" : 'Hospital release';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "App" : 'You are about to be released from hospital!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "App"
+            : 'You are about to be released from hospital!';
         notificationPayload += 'hospital';
         notificationIconAndroid = "notification_hospital";
         notificationIconColor = Colors.yellow;
@@ -6760,8 +5595,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual jail';
         channelDescription = 'Manual notifications for jail';
         notificationTitle = _settingsProvider!.discreetNotifications ? "J" : 'Jail release';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "App" : 'You are about to be released from jail!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "App"
+            : 'You are about to be released from jail!';
         notificationPayload += 'jail';
         notificationIconAndroid = "notification_events";
         notificationIconColor = Colors.purple;
@@ -6800,10 +5636,27 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         channelSubtitle = 'Manual education';
         channelDescription = 'Manual notifications for education';
         notificationTitle = _settingsProvider!.discreetNotifications ? "Edu" : 'Education Complete';
-        notificationSubtitle =
-            _settingsProvider!.discreetNotifications ? "Done" : 'Your education course has finished!';
+        notificationSubtitle = _settingsProvider!.discreetNotifications
+            ? "Done"
+            : 'Your education course has finished!';
         notificationIconAndroid = "notification_items";
         notificationIconColor = Colors.blueGrey;
+      case ProfileNotification.virus:
+        notificationId = 114;
+        if (_virusNotificationTime != null) {
+          secondsToNotification = _virusNotificationTime!.difference(DateTime.now()).inSeconds;
+          final myTimeStamp = (_virusNotificationTime!.millisecondsSinceEpoch / 1000).floor();
+          notificationPayload += '${profileNotification.string}-$myTimeStamp';
+        } else {
+          secondsToNotification = 0;
+        }
+        channelTitle = 'Manual virus';
+        channelSubtitle = 'Manual virus';
+        channelDescription = 'Manual notifications for virus coding';
+        notificationTitle = _settingsProvider!.discreetNotifications ? "Vir" : 'Virus Coded';
+        notificationSubtitle = _settingsProvider!.discreetNotifications ? "Done" : 'Your virus has finished coding!';
+        notificationIconAndroid = "notification_items";
+        notificationIconColor = Colors.deepPurple;
     }
 
     final modifier = await getNotificationChannelsModifiers();
@@ -6830,11 +5683,15 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       ledOffMs: 500,
     );
 
-    var iOSPlatformChannelSpecifics =
-        const DarwinNotificationDetails(presentSound: true, sound: 'slow_spring_board.aiff');
+    var iOSPlatformChannelSpecifics = const DarwinNotificationDetails(
+      presentSound: true,
+      sound: 'slow_spring_board.aiff',
+    );
     if (notificationId == 201) {
-      iOSPlatformChannelSpecifics =
-          const DarwinNotificationDetails(presentSound: true, sound: 'aircraft_seatbelt.aiff');
+      iOSPlatformChannelSpecifics = const DarwinNotificationDetails(
+        presentSound: true,
+        sound: 'aircraft_seatbelt.aiff',
+      );
     }
 
     final platformChannelSpecifics = NotificationDetails(
@@ -6846,16 +5703,23 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       await assessExactAlarmsPermissionsAndroid(context, _settingsProvider!);
     }
 
+    final int scheduleInSeconds = debugQuickProfileAlerts && kDebugMode
+        ? debugQuickProfileLeadSeconds
+        : secondsToNotification!;
+    if (debugQuickProfileAlerts && kDebugMode) {
+      log('Quick profile alert: notification moved to $scheduleInSeconds seconds');
+    }
+
     await flutterLocalNotificationsPlugin.zonedSchedule(
       notificationId,
       notificationTitle,
       notificationSubtitle,
-      //tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10)), // DEBUG
-      tz.TZDateTime.now(tz.local).add(Duration(seconds: secondsToNotification!)),
+      tz.TZDateTime.now(tz.local).add(Duration(seconds: scheduleInSeconds)),
       platformChannelSpecifics,
       payload: notificationPayload,
       androidScheduleMode: exactAlarmsPermissionAndroid
-          ? AndroidScheduleMode.exactAllowWhileIdle // Deliver at exact time (needs permission)
+          ? AndroidScheduleMode
+                .exactAllowWhileIdle // Deliver at exact time (needs permission)
           : AndroidScheduleMode.inexactAllowWhileIdle,
     );
 
@@ -6879,6 +5743,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     bool war = false;
     bool raceStart = false;
     bool education = false;
+    bool virus = false;
 
     final pendingNotificationRequests = await flutterLocalNotificationsPlugin.pendingNotificationRequests();
 
@@ -6920,6 +5785,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         if (notification.id == 113) {
           education = true;
         }
+        if (notification.id == 114) {
+          virus = true;
+        }
       }
     }
 
@@ -6937,6 +5805,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         _rankedWarNotificationsPending = war;
         _raceStartNotificationsPending = raceStart;
         _educationNotificationsPending = education;
+        _virusNotificationsPending = virus;
       });
     }
 
@@ -6969,6 +5838,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         await flutterLocalNotificationsPlugin.cancel(110);
       case ProfileNotification.education:
         await flutterLocalNotificationsPlugin.cancel(113);
+      case ProfileNotification.virus:
+        await flutterLocalNotificationsPlugin.cancel(114);
     }
 
     _retrievePendingNotifications();
@@ -7015,10 +5886,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           _cancelNotifications(ProfileNotification.energy);
           BotToast.showText(
             text: 'Energy notification expired, removing!',
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 5),
             contentPadding: const EdgeInsets.all(10),
@@ -7075,10 +5943,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           _cancelNotifications(ProfileNotification.nerve);
           BotToast.showText(
             text: 'Nerve notification expired, removing!',
-            textStyle: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-            ),
+            textStyle: const TextStyle(fontSize: 14, color: Colors.white),
             contentColor: Colors.grey[700]!,
             duration: const Duration(seconds: 5),
             contentPadding: const EdgeInsets.all(10),
@@ -7202,10 +6067,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
       BotToast.showText(
         text: 'Some notifications have been updated: $thoseUpdated',
-        textStyle: const TextStyle(
-          fontSize: 14,
-          color: Colors.white,
-        ),
+        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
         contentColor: Colors.grey[700]!,
         duration: const Duration(seconds: 5),
         contentPadding: const EdgeInsets.all(10),
@@ -7244,13 +6106,17 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return "No battle stats available";
       }
       var battleString = "\n\nBATTLE STATS";
-      battleString += '\nStrength: ${decimalFormat.format(_miscModel!.battleStats!.strength!.value)} '
+      battleString +=
+          '\nStrength: ${decimalFormat.format(_miscModel!.battleStats!.strength!.value)} '
           '(${decimalFormat.format(_miscModel!.battleStats!.strength!.value * 100 / _miscModel!.battleStats!.total!)}%)';
-      battleString += '\nDefense: ${decimalFormat.format(_miscModel!.battleStats!.defense!.value)} '
+      battleString +=
+          '\nDefense: ${decimalFormat.format(_miscModel!.battleStats!.defense!.value)} '
           '(${decimalFormat.format(_miscModel!.battleStats!.defense!.value * 100 / _miscModel!.battleStats!.total!)}%)';
-      battleString += '\nSpeed: ${decimalFormat.format(_miscModel!.battleStats!.speed!.value)} '
+      battleString +=
+          '\nSpeed: ${decimalFormat.format(_miscModel!.battleStats!.speed!.value)} '
           '(${decimalFormat.format(_miscModel!.battleStats!.speed!.value * 100 / _miscModel!.battleStats!.total!)}%)';
-      battleString += '\nDexterity: ${decimalFormat.format(_miscModel!.battleStats!.dexterity!.value)} '
+      battleString +=
+          '\nDexterity: ${decimalFormat.format(_miscModel!.battleStats!.dexterity!.value)} '
           '(${decimalFormat.format(_miscModel!.battleStats!.dexterity!.value * 100 / _miscModel!.battleStats!.total!)}%)';
       battleString += '\n-------';
       battleString += '\nTotal: ${decimalFormat.format(_miscModel!.battleStats!.total)}';
@@ -7273,6 +6139,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       workString += '\nManual labor: ${decimalFormat.format(_miscModel!.workStats?.manualLabor)}';
       workString += '\nIntelligence: ${decimalFormat.format(_miscModel!.workStats?.intelligence)}';
       workString += '\nEndurance: ${decimalFormat.format(_miscModel!.workStats?.endurance)}';
+      workString += '\n-------';
+      workString += '\nTotal: ${decimalFormat.format(_miscModel!.workStats?.total)}';
       return workString;
     }
 
@@ -7410,15 +6278,17 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   void _onShare(String shareText) async {
-    await SharePlus.instance.share(ShareParams(
-      text: shareText,
-      sharePositionOrigin: Rect.fromLTWH(
-        0,
-        0,
-        MediaQuery.of(context).size.width,
-        MediaQuery.of(context).size.height / 2,
+    await SharePlus.instance.share(
+      ShareParams(
+        text: shareText,
+        sharePositionOrigin: Rect.fromLTWH(
+          0,
+          0,
+          MediaQuery.of(context).size.width,
+          MediaQuery.of(context).size.height / 2,
+        ),
       ),
-    ));
+    );
   }
 
   Future _loadPreferences() async {
@@ -7552,6 +6422,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final drugs = await Prefs().getDrugNotificationType();
     final medical = await Prefs().getMedicalNotificationType();
     final education = await Prefs().getEducationNotificationType();
+    final virus = await Prefs().getVirusNotificationType();
     final booster = await Prefs().getBoosterNotificationType();
 
     final hospital = await Prefs().getHospitalNotificationType();
@@ -7585,6 +6456,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     _showHeaderIcons = await Prefs().getShowHeaderIcons();
     _showShortcutEditIcon = await Prefs().getShowShortcutEditIcon();
     _dedicatedTravelCard = await Prefs().getDedicatedTravelCard();
+    _hideProfileFab = await Prefs().getHideProfileFab();
 
     if (Platform.isIOS) {
       _isAlarmKitAvailableIos = await AlarmKitServiceIos.isAvailable();
@@ -7681,6 +6553,20 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         _educationNotificationIcon = Icons.chat_bubble_outline;
       }
 
+      if (virus == '0') {
+        _virusNotificationType = NotificationType.notification;
+        _virusNotificationIcon = Icons.chat_bubble_outline;
+      } else if (virus == '1') {
+        _virusNotificationType = NotificationType.alarm;
+        _virusNotificationIcon = Icons.notifications_none;
+      } else if (virus == '2') {
+        _virusNotificationType = NotificationType.timer;
+        _virusNotificationIcon = Icons.timer_outlined;
+      } else {
+        _virusNotificationType = NotificationType.notification;
+        _virusNotificationIcon = Icons.chat_bubble_outline;
+      }
+
       if (booster == '0') {
         _boosterNotificationType = NotificationType.notification;
         _boosterNotificationIcon = Icons.chat_bubble_outline;
@@ -7742,6 +6628,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       _messagesShowNumber = messagesNumber;
       _basicInfoExpController.expanded = expandBasicInfo;
       _networthExpController.expanded = expandNetworth;
+      _profileApi.setShowNumbers(messagesNumber, eventsNumber);
 
       if (Platform.isIOS) {
         if (_travelNotificationType == NotificationType.timer) {
@@ -7957,16 +6844,55 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           moreThan24Hours = false;
         }
         message = isIOS ? 'Education' : 'Torn PDA Education';
+      case ProfileNotification.virus:
+        if (_virusNotificationTime != null) {
+          hour = _virusNotificationTime!.hour;
+          minute = _virusNotificationTime!.minute;
+          alarmDateTime = _virusNotificationTime;
+          Duration difference = currentTime.difference(_virusNotificationTime!);
+          moreThan24Hours = difference.inMinutes.abs() > 1439;
+        } else {
+          hour = currentTime.hour;
+          minute = currentTime.minute;
+          alarmDateTime = currentTime;
+          moreThan24Hours = false;
+        }
+        message = isIOS ? 'Virus' : 'Torn PDA Virus';
     }
 
-    if (moreThan24Hours) {
+    // Debug
+    if (debugQuickProfileAlerts && kDebugMode) {
+      alarmDateTime = DateTime.now().add(Duration(seconds: debugQuickProfileLeadSeconds));
+      hour = alarmDateTime.hour;
+      minute = alarmDateTime.minute;
+      moreThan24Hours = true;
+      log('Quick profile alert: alarm moved to $alarmDateTime, forcing the long wait branch');
+    }
+
+    // Beyond 24 hours the Android clock cannot hold the date, so Torn PDA sounds the alarm itself
+    // AlarmKit takes any date, so iOS never needs this
+    if (moreThan24Hours && Platform.isAndroid) {
+      if (alarmDateTime == null) return;
+      await assessExactAlarmsPermissionsAndroid(context, _settingsProvider!);
+      await scheduleAlarmGradeNotificationAndroid(
+        notificationId: 1000 + profileNotification.index,
+        channelName: 'Profile alarms',
+        channelDescription: 'Manual alarms for profile timers longer than 24 hours',
+        title: message,
+        body: _settingsProvider!.discreetNotifications ? " " : 'Your wait is over!',
+        targetTime: alarmDateTime,
+        payload: descriptor.payload,
+        sound: 'slow_spring_board',
+        playSound: _alarmSound,
+        vibrate: _alarmVibration,
+      );
+
       BotToast.showText(
-        text: "Alarms can't be set for a period longer than 24 hours!",
-        textStyle: const TextStyle(
-          fontSize: 14,
-          color: Colors.white,
-        ),
-        contentColor: _themeProvider!.getTextColor(Colors.red),
+        text: '$alarmSetString (activated by Torn PDA, as it is over 24 hours away)',
+        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
+        contentColor: percentageError
+            ? _themeProvider!.getTextColor(Colors.red)
+            : _themeProvider!.getTextColor(Colors.green),
         duration: const Duration(seconds: 5),
         contentPadding: const EdgeInsets.all(10),
       );
@@ -7979,10 +6905,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       if (!available) {
         BotToast.showText(
           text: 'Alarms are not available on this iOS device!',
-          textStyle: const TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-          ),
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
           contentColor: _themeProvider!.getTextColor(Colors.red),
           duration: const Duration(seconds: 5),
           contentPadding: const EdgeInsets.all(10),
@@ -7990,34 +6913,40 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return;
       }
 
-      await AlarmKitServiceIos.setAlarm(
-        targetTime: alarmDateTime,
-        label: message,
-        id: descriptor.alarmId,
-        metadata: AlarmKitServiceIos.buildMetadata(
-          alarmId: descriptor.alarmId,
-          context: descriptor.context,
-          details: 'Triggers at ${TimeFormatter(
-            inputTime: alarmDateTime,
-            timeFormatSetting: _settingsProvider!.currentTimeFormat,
-            timeZoneSetting: _settingsProvider!.currentTimeZone,
-          ).formatHourWithDaysElapsed()}',
-          payload: descriptor.payload,
-          timeMillis: alarmDateTime.millisecondsSinceEpoch,
-        ),
-      );
+      try {
+        await AlarmKitServiceIos.setAlarm(
+          targetTime: alarmDateTime,
+          label: message,
+          id: descriptor.alarmId,
+          metadata: AlarmKitServiceIos.buildMetadata(
+            alarmId: descriptor.alarmId,
+            context: descriptor.context,
+            details:
+                'Triggers at ${TimeFormatter(inputTime: alarmDateTime, timeFormatSetting: _settingsProvider!.currentTimeFormat, timeZoneSetting: _settingsProvider!.currentTimeZone).formatHourWithDaysElapsed()}',
+            payload: descriptor.payload,
+            timeMillis: alarmDateTime.millisecondsSinceEpoch,
+          ),
+        );
+      } catch (e) {
+        BotToast.showText(
+          text: 'Could not schedule alarm!',
+          textStyle: const TextStyle(fontSize: 14, color: Colors.white),
+          contentColor: _themeProvider!.getTextColor(Colors.red),
+          duration: const Duration(seconds: 5),
+          contentPadding: const EdgeInsets.all(10),
+        );
+        return;
+      }
       await _refreshActiveAlarmKitIds();
       return;
     }
 
     BotToast.showText(
       text: alarmSetString,
-      textStyle: const TextStyle(
-        fontSize: 14,
-        color: Colors.white,
-      ),
-      contentColor:
-          percentageError ? _themeProvider!.getTextColor(Colors.red) : _themeProvider!.getTextColor(Colors.green),
+      textStyle: const TextStyle(fontSize: 14, color: Colors.white),
+      contentColor: percentageError
+          ? _themeProvider!.getTextColor(Colors.red)
+          : _themeProvider!.getTextColor(Colors.green),
       duration: const Duration(seconds: 5),
       contentPadding: const EdgeInsets.all(10),
     );
@@ -8061,8 +6990,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         'android.intent.extra.alarm.SKIP_UI': true,
         'android.intent.extra.alarm.VIBRATE': alarmVibration,
         'android.intent.extra.alarm.RINGTONE': thisSound,
-        'android.intent.extra.alarm.MESSAGE':
-            _settingsProvider!.discreetNotifications ? _getDiscreetAlarmMessage(profileNotification) : message,
+        'android.intent.extra.alarm.MESSAGE': _settingsProvider!.discreetNotifications
+            ? _getDiscreetAlarmMessage(profileNotification)
+            : message,
       },
     );
     intent.launch();
@@ -8072,10 +7002,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (Platform.isIOS) {
       BotToast.showText(
         text: 'Timers are not supported on iOS',
-        textStyle: const TextStyle(
-          fontSize: 14,
-          color: Colors.white,
-        ),
+        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
         contentColor: _themeProvider!.getTextColor(Colors.red),
         duration: const Duration(seconds: 5),
         contentPadding: const EdgeInsets.all(10),
@@ -8123,6 +7050,21 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       case ProfileNotification.education:
         totalSeconds = _educationNotificationTime?.difference(DateTime.now()).inSeconds ?? 0;
         message = 'Torn PDA Education';
+      case ProfileNotification.virus:
+        totalSeconds = _virusNotificationTime?.difference(DateTime.now()).inSeconds ?? 0;
+        message = 'Torn PDA Virus';
+    }
+
+    // SET_TIMER is capped at 86400 seconds, same limit the alarm path already enforces
+    if (totalSeconds > 86400) {
+      BotToast.showText(
+        text: "Timers can't be set for a period longer than 24 hours!",
+        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
+        contentColor: _themeProvider!.getTextColor(Colors.red),
+        duration: const Duration(seconds: 5),
+        contentPadding: const EdgeInsets.all(10),
+      );
+      return;
     }
 
     final AndroidIntent intent = AndroidIntent(
@@ -8130,8 +7072,9 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       arguments: <String, dynamic>{
         'android.intent.extra.alarm.LENGTH': totalSeconds,
         'android.intent.extra.alarm.SKIP_UI': true,
-        'android.intent.extra.alarm.MESSAGE':
-            _settingsProvider!.discreetNotifications ? _getDiscreetTimerMessage(profileNotification) : message,
+        'android.intent.extra.alarm.MESSAGE': _settingsProvider!.discreetNotifications
+            ? _getDiscreetTimerMessage(profileNotification)
+            : message,
       },
     );
     intent.launch();
@@ -8163,6 +7106,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return "R";
       case ProfileNotification.education:
         return "Edu";
+      case ProfileNotification.virus:
+        return "Vir";
     }
   }
 
@@ -8192,6 +7137,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return "R";
       case ProfileNotification.education:
         return "Edu";
+      case ProfileNotification.virus:
+        return "Vir";
     }
   }
 
@@ -8205,9 +7152,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           elevation: 0.0,
           backgroundColor: Colors.transparent,
           content: SingleChildScrollView(
@@ -8215,23 +7160,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               children: <Widget>[
                 SingleChildScrollView(
                   child: Container(
-                    padding: const EdgeInsets.only(
-                      top: 45,
-                      bottom: 16,
-                      left: 16,
-                      right: 16,
-                    ),
+                    padding: const EdgeInsets.only(top: 45, bottom: 16, left: 16, right: 16),
                     margin: const EdgeInsets.only(top: 15),
                     decoration: BoxDecoration(
                       color: _themeProvider!.secondBackground,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 10.0,
-                          offset: Offset(0.0, 10.0),
-                        ),
-                      ],
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10.0, offset: Offset(0.0, 10.0))],
                     ),
                     child: Column(
                       children: <Widget>[
@@ -8267,12 +7201,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           child: ElevatedButton(
                             child: Row(
                               children: [
-                                Image.asset(
-                                  'images/icons/faction.png',
-                                  width: 15,
-                                  height: 15,
-                                  color: Colors.white70,
-                                ),
+                                Image.asset('images/icons/faction.png', width: 15, height: 15, color: Colors.white70),
                                 const SizedBox(width: 15),
                                 const Text("Faction vault"),
                               ],
@@ -8294,12 +7223,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           child: ElevatedButton(
                             child: Row(
                               children: [
-                                Image.asset(
-                                  'images/icons/home/job.png',
-                                  width: 15,
-                                  height: 15,
-                                  color: Colors.white70,
-                                ),
+                                Image.asset('images/icons/home/job.png', width: 15, height: 15, color: Colors.white70),
                                 const SizedBox(width: 15),
                                 const Text("Company vault"),
                               ],
@@ -8336,14 +7260,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     child: CircleAvatar(
                       backgroundColor: _themeProvider!.secondBackground,
                       radius: 22,
-                      child: const SizedBox(
-                        height: 34,
-                        width: 34,
-                        child: Icon(
-                          MdiIcons.cash100,
-                          color: Colors.green,
-                        ),
-                      ),
+                      child: const SizedBox(height: 34, width: 34, child: Icon(MdiIcons.cash100, color: Colors.green)),
                     ),
                   ),
                 ),
@@ -8355,14 +7272,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showLifeBarDialog(BuildContext _, {bool longPress = false}) {
+  Future<void> _showLifeBarDialog(BuildContext ctx, {bool longPress = false}) {
     return showDialog<void>(
-      context: _,
+      context: ctx,
       builder: (BuildContext context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           elevation: 0.0,
           backgroundColor: Colors.transparent,
           content: SingleChildScrollView(
@@ -8370,36 +7285,19 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               children: <Widget>[
                 SingleChildScrollView(
                   child: Container(
-                    padding: const EdgeInsets.only(
-                      top: 45,
-                      bottom: 16,
-                      left: 16,
-                      right: 16,
-                    ),
+                    padding: const EdgeInsets.only(top: 45, bottom: 16, left: 16, right: 16),
                     margin: const EdgeInsets.only(top: 15),
                     decoration: BoxDecoration(
                       color: _themeProvider!.secondBackground,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 10.0,
-                          offset: Offset(0.0, 10.0),
-                        ),
-                      ],
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10.0, offset: Offset(0.0, 10.0))],
                     ),
                     child: Column(
                       children: <Widget>[
                         Padding(
                           padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                           child: ElevatedButton(
-                            child: const Row(
-                              children: [
-                                Icon(Icons.person),
-                                SizedBox(width: 15),
-                                Text("Inventory"),
-                              ],
-                            ),
+                            child: const Row(children: [Icon(Icons.person), SizedBox(width: 15), Text("Inventory")]),
                             onPressed: () async {
                               const url = "https://www.torn.com/item.php#medical-items";
                               if (longPress) {
@@ -8417,12 +7315,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           child: ElevatedButton(
                             child: Row(
                               children: [
-                                Image.asset(
-                                  'images/icons/faction.png',
-                                  width: 25,
-                                  height: 15,
-                                  color: Colors.white70,
-                                ),
+                                Image.asset('images/icons/faction.png', width: 25, height: 15, color: Colors.white70),
                                 const SizedBox(width: 15),
                                 const Text("Faction"),
                               ],
@@ -8463,10 +7356,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       child: const SizedBox(
                         height: 34,
                         width: 34,
-                        child: Icon(
-                          MdiIcons.hospitalBox,
-                          color: Colors.red,
-                        ),
+                        child: Icon(MdiIcons.hospitalBox, color: Colors.red),
                       ),
                     ),
                   ),
@@ -8546,7 +7436,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(width: 6),
-        Semantics(label: headerString, child: SelectionArea(child: Text(headerString))),
+        Semantics(
+          label: headerString,
+          child: SelectionArea(child: Text(headerString)),
+        ),
         const SizedBox(width: 10),
         GestureDetector(
           onTap: () => showDialog(
@@ -8582,17 +7475,10 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           label: "Company addition is $_companyAddiction",
           child: Row(
             children: [
-              Image.asset(
-                'images/icons/chart_down.png',
-                height: 18,
-                color: Colors.brown[300],
-              ),
+              Image.asset('images/icons/chart_down.png', height: 18, color: Colors.brown[300]),
               const SizedBox(width: 9),
               const Text("Company Addiction: "),
-              Text(
-                "$_companyAddiction",
-                style: TextStyle(color: c),
-              ),
+              Text("$_companyAddiction", style: TextStyle(color: c)),
             ],
           ),
         ),
@@ -8633,11 +7519,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return const SizedBox.shrink();
     }
 
-    return Image(
-      image: AssetImage(flagFile),
-      height: 30,
-      width: 40,
-    );
+    return Image(image: AssetImage(flagFile), height: 30, width: 40);
   }
 
   String _flagBallAsset() {
@@ -8699,72 +7581,25 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
     for (final section in _userSectionOrder!) {
       if (section == "Shortcuts" && _settingsProvider!.shortcutsEnabledProfile) {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _shortcutsCarrousel(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _shortcutsCarrousel()));
       } else if (section == "Status") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _playerStatus(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _playerStatus()));
       } else if (section == "Travel" && _dedicatedTravelCard) {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _travelCard(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _travelCard()));
       } else if (section == "Bars") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _basicBars(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _basicBars()));
       } else if (section == "Cooldowns") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _coolDowns(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _coolDowns()));
       } else if (section == "Events") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _eventsTimeline(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _eventsTimeline()));
       } else if (section == "Messages") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _messagesTimeline(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _messagesTimeline()));
       } else if (section == "Basic Info" && _miscApiFetchedOnce) {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _playerStats(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _playerStats()));
       } else if (section == "Misc") {
-        sectionSort.add(
-          _miscellaneous(),
-        );
+        sectionSort.add(_miscellaneous());
       } else if (section == "Networth") {
-        sectionSort.add(
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
-            child: _netWorth(),
-          ),
-        );
+        sectionSort.add(Padding(padding: const EdgeInsets.fromLTRB(20, 5, 20, 5), child: _netWorth()));
       }
     }
     return sectionSort;
@@ -8833,14 +7668,16 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               if (property.rentedBy!.id == _user!.playerId) {
                 thisRented[property.id.toString()] = {
                   "time": timeLeft.toString(),
-                  "text": "Your ${property.property!.name!.toLowerCase()}'s "
+                  "text":
+                      "Your ${property.property!.name!.toLowerCase()}'s "
                       "rent will end in $daysString!",
                   'rentedOut': 'false',
                 };
               } else {
                 thisRented[property.id.toString()] = {
                   "time": timeLeft.toString(),
-                  "text": "Your ${property.property!.name!.toLowerCase()}'s "
+                  "text":
+                      "Your ${property.property!.name!.toLowerCase()}'s "
                       "rental agreement with ${property.rentedBy!.name!.toLowerCase()} will end in $daysString!",
                   'rentedOut': 'true',
                 };
@@ -8882,8 +7719,8 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         style: TextStyle(
                           color: numberDays <= 5
                               ? numberDays <= 2
-                                  ? _themeProvider!.getTextColor(Colors.red[500])
-                                  : _themeProvider!.getTextColor(Colors.orange[800])
+                                    ? _themeProvider!.getTextColor(Colors.red[500])
+                                    : _themeProvider!.getTextColor(Colors.orange[800])
                               : tP.mainText,
                         ),
                       );
@@ -8907,10 +7744,7 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 shortTap: true,
               );
             },
-            child: const Padding(
-              padding: EdgeInsets.only(left: 5),
-              child: Icon(MdiIcons.openInApp, size: 18),
-            ),
+            child: const Padding(padding: EdgeInsets.only(left: 5), child: Icon(MdiIcons.openInApp, size: 18)),
           ),
         ],
       );
@@ -8935,26 +7769,12 @@ class ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   void _disregardCrimeCallback() {
-    // We first remove the crime from the current screen
-    setState(() {
-      _ocSimpleExists = false;
-      _ocSimpleStringFinal = "";
-    });
-    // Afterwards, ensure that it does not show again if it's the same one
-    _settingsProvider!.changeOCrimeDisregarded = _ocTime.millisecondsSinceEpoch;
+    _profileApi.disregardSimpleCrime();
   }
 
   DateTime? _parseRaceTime(String input) {
-    final raceStartRegex =
-        RegExp(r"Waiting for a race to start - (\d+ days?,)? (\d+ hours?,)? (\d+) minutes and (\d+) seconds");
-    final match = raceStartRegex.firstMatch(input);
-    if (match != null) {
-      int days = int.tryParse(match.group(1)?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
-      int hours = int.tryParse(match.group(2)?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
-      int minutes = int.tryParse(match.group(3) ?? '0') ?? 0;
-      int seconds = int.tryParse(match.group(4) ?? '0') ?? 0;
-      return DateTime.now().add(Duration(days: days, hours: hours, minutes: minutes, seconds: seconds));
-    }
-    return null;
+    final int? totalSeconds = RacingLiveActivityParser.parseRelativeSeconds(input);
+    if (totalSeconds == null) return null;
+    return DateTime.now().add(Duration(seconds: totalSeconds));
   }
 }

@@ -1,5 +1,16 @@
 package com.manuito.tornpda.liveupdates
 
+enum class LiveUpdateActivityType(val wireName: String) {
+    TRAVEL("travel"),
+    RACING("racing");
+
+    companion object {
+        fun fromWireName(value: String?): LiveUpdateActivityType {
+            return values().firstOrNull { it.wireName == value } ?: TRAVEL
+        }
+    }
+}
+
 enum class LiveUpdateRequestStatus(val wireName: String) {
     STARTED("started"),
     UPDATED("updated"),
@@ -17,6 +28,7 @@ enum class LiveUpdateUnsupportedReason(val wireName: String) {
     API_TOO_OLD("API_TOO_OLD"),
     OEM_UNAVAILABLE("OEM_UNAVAILABLE"),
     PERMISSION_DENIED("PERMISSION_DENIED"),
+    PROMOTED_DISABLED("PROMOTED_DISABLED"),
     BATTERY_RESTRICTED("BATTERY_RESTRICTED"),
     INTERNAL_ERROR("INTERNAL_ERROR"),
     UNKNOWN("UNKNOWN");
@@ -43,6 +55,7 @@ data class LiveUpdateCapabilitySnapshot(
     val supportedApi: Boolean,
     val oemCapsule: Boolean,
     val notificationsEnabled: Boolean,
+    val promotedNotificationsEnabled: Boolean = true,
     val batteryOptimized: Boolean,
     val vendor: String,
     val timestampMs: Long? = null,
@@ -51,6 +64,7 @@ data class LiveUpdateCapabilitySnapshot(
         "supportedApi" to supportedApi,
         "oemCapsule" to oemCapsule,
         "notificationsEnabled" to notificationsEnabled,
+        "promotedNotificationsEnabled" to promotedNotificationsEnabled,
         "batteryOptimized" to batteryOptimized,
         "vendor" to vendor,
         "timestamp" to timestampMs,
@@ -122,8 +136,11 @@ object LiveUpdateIntentExtras {
     const val EXTRA_TARGET_ROUTE = "live_update_target_route"
     const val EXTRA_ENTRY_POINT = "live_update_entry_point"
     const val EXTRA_SESSION_ID = "live_update_session_id"
-    const val EXTRA_TRAVEL_IDENTIFIER = "live_update_travel_identifier"
+    const val EXTRA_CONTENT_IDENTIFIER = "live_update_content_identifier"
     const val ROUTE_TRAVEL = "travel"
+    const val ROUTE_RACING = "racing"
     const val ENTRY_POINT_TRAVEL = "live_update_travel"
+    const val ENTRY_POINT_RACING = "live_update_racing"
     const val ACTION_TRAVEL_LIVE_UPDATE = "com.manuito.tornpda.action.TRAVEL_LIVE_UPDATE"
+    const val ACTION_RACING_LIVE_UPDATE = "com.manuito.tornpda.action.RACING_LIVE_UPDATE"
 }

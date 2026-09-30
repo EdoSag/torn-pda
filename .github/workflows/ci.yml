@@ -1,0 +1,253 @@
+# Torn PDA — CI Pipeline
+#
+# Runs on every push and pull request against develop and master.
+#   1. analyze  — dart static analysis (push + PR)
+#   2. test     — flutter unit & widget tests (push + PR)
+#   3. functions — checks Cloud Functions install, lint, and TypeScript build (push + PR)
+#   4. ios      — confirms the iOS app still compiles without signing (PR only)
+#   5. build    — confirms the Android APK still compiles (PR only)
+#
+# All jobs run on GitHub-hosted runners. Public repos get unlimited
+# free minutes, so this costs nothing.
+#
+# See .github/workflows/README.md for maintenance notes.
+
+name: CI
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+    branches: [develop, master]
+
+# Cancel previous runs for the same PR / branch to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.0"
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Static analysis
+  # ──────────────────────────────────────────────
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # Copy config stubs so the analyzer can resolve all imports
+      # Guarded ([ ! -f ]) so running this locally never overwrites real private files
+      - name: Copy config stubs
+        run: |
+          cd lib/config
+          for f in *.dart.example; do
+            target="${f%.example}"
+            if [ ! -f "$target" ]; then cp "$f" "$target"; fi
+          done
+          if [ ! -f ../firebase_options.dart ]; then cp firebase_options.dart.example ../firebase_options.dart; fi
+          cd ..
+          mkdir -p torn-pda-native/auth torn-pda-native/stats
+          if [ ! -f torn-pda-native/auth/native_auth_models.dart ];  then cp config/native_auth_models.dart.example  torn-pda-native/auth/native_auth_models.dart;  fi
+          if [ ! -f torn-pda-native/auth/native_auth_provider.dart ]; then cp config/native_auth_provider.dart.example torn-pda-native/auth/native_auth_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_user_provider.dart ]; then cp config/native_user_provider.dart.example torn-pda-native/auth/native_user_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_login_widget.dart ];  then cp config/native_login_widget.dart.example  torn-pda-native/auth/native_login_widget.dart;  fi
+          if [ ! -f torn-pda-native/stats/stats_controller.dart ];    then cp config/stats_controller.dart.example      torn-pda-native/stats/stats_controller.dart;    fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run analyzer
+        run: flutter analyze --no-fatal-infos
+
+  # ──────────────────────────────────────────────
+  # 2. Unit & widget tests
+  # ──────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Copy config stubs
+        run: |
+          cd lib/config
+          for f in *.dart.example; do
+            target="${f%.example}"
+            if [ ! -f "$target" ]; then cp "$f" "$target"; fi
+          done
+          if [ ! -f ../firebase_options.dart ]; then cp firebase_options.dart.example ../firebase_options.dart; fi
+          cd ..
+          mkdir -p torn-pda-native/auth torn-pda-native/stats
+          if [ ! -f torn-pda-native/auth/native_auth_models.dart ];  then cp config/native_auth_models.dart.example  torn-pda-native/auth/native_auth_models.dart;  fi
+          if [ ! -f torn-pda-native/auth/native_auth_provider.dart ]; then cp config/native_auth_provider.dart.example torn-pda-native/auth/native_auth_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_user_provider.dart ]; then cp config/native_user_provider.dart.example torn-pda-native/auth/native_user_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_login_widget.dart ];  then cp config/native_login_widget.dart.example  torn-pda-native/auth/native_login_widget.dart;  fi
+          if [ ! -f torn-pda-native/stats/stats_controller.dart ];    then cp config/stats_controller.dart.example      torn-pda-native/stats/stats_controller.dart;    fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test --coverage
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          retention-days: 14
+
+  # ──────────────────────────────────────────────
+  # 3. Cloud Functions — proves backend functions lint and compile
+  # ──────────────────────────────────────────────
+  functions:
+    name: Cloud Functions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud_functions/functions
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud_functions/functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Build TypeScript
+        run: npm run build
+
+  # ──────────────────────────────────────────────
+  # 4. iOS build — proves the iOS project compiles (PR only)
+  # ──────────────────────────────────────────────
+  ios:
+    name: Build iOS
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Copy config stubs
+        run: |
+          cd lib/config
+          for f in *.dart.example; do
+            target="${f%.example}"
+            if [ ! -f "$target" ]; then cp "$f" "$target"; fi
+          done
+          if [ ! -f ../firebase_options.dart ]; then cp firebase_options.dart.example ../firebase_options.dart; fi
+          cd ..
+          mkdir -p torn-pda-native/auth torn-pda-native/stats
+          if [ ! -f torn-pda-native/auth/native_auth_models.dart ];  then cp config/native_auth_models.dart.example  torn-pda-native/auth/native_auth_models.dart;  fi
+          if [ ! -f torn-pda-native/auth/native_auth_provider.dart ]; then cp config/native_auth_provider.dart.example torn-pda-native/auth/native_auth_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_user_provider.dart ]; then cp config/native_user_provider.dart.example torn-pda-native/auth/native_user_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_login_widget.dart ];  then cp config/native_login_widget.dart.example  torn-pda-native/auth/native_login_widget.dart;  fi
+          if [ ! -f torn-pda-native/stats/stats_controller.dart ];    then cp config/stats_controller.dart.example      torn-pda-native/stats/stats_controller.dart;    fi
+
+      - name: Create iOS CI stubs
+        run: |
+          cat > ios/Flutter/Secrets.xcconfig <<'EOF'
+          GOOGLE_CLIENT_ID=stub.apps.googleusercontent.com
+          GOOGLE_REVERSED_CLIENT_ID=com.googleusercontent.apps.stub
+          EOF
+
+          cat > ios/Runner/GoogleService-Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>API_KEY</key>
+            <string>stub</string>
+            <key>CLIENT_ID</key>
+            <string>stub.apps.googleusercontent.com</string>
+            <key>GCM_SENDER_ID</key>
+            <string>000000000000</string>
+            <key>GOOGLE_APP_ID</key>
+            <string>1:000000000000:ios:0000000000000000</string>
+            <key>PLIST_VERSION</key>
+            <string>1</string>
+            <key>BUNDLE_ID</key>
+            <string>com.manuito.tornpda</string>
+            <key>PROJECT_ID</key>
+            <string>torn-pda-stub</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Install FlutterFire CLI
+        run: dart pub global activate flutterfire_cli
+
+      - name: Build iOS without code signing
+        run: flutter build ios --no-codesign
+
+  # ──────────────────────────────────────────────
+  # 5. Build (APK) — proves the project compiles (PR only)
+  # ──────────────────────────────────────────────
+  build:
+    name: Build APK
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Copy config stubs
+        run: |
+          cd lib/config
+          for f in *.dart.example; do
+            target="${f%.example}"
+            if [ ! -f "$target" ]; then cp "$f" "$target"; fi
+          done
+          if [ ! -f ../firebase_options.dart ]; then cp firebase_options.dart.example ../firebase_options.dart; fi
+          cd ..
+          mkdir -p torn-pda-native/auth torn-pda-native/stats
+          if [ ! -f torn-pda-native/auth/native_auth_models.dart ];  then cp config/native_auth_models.dart.example  torn-pda-native/auth/native_auth_models.dart;  fi
+          if [ ! -f torn-pda-native/auth/native_auth_provider.dart ]; then cp config/native_auth_provider.dart.example torn-pda-native/auth/native_auth_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_user_provider.dart ]; then cp config/native_user_provider.dart.example torn-pda-native/auth/native_user_provider.dart; fi
+          if [ ! -f torn-pda-native/auth/native_login_widget.dart ];  then cp config/native_login_widget.dart.example  torn-pda-native/auth/native_login_widget.dart;  fi
+          if [ ! -f torn-pda-native/stats/stats_controller.dart ];    then cp config/stats_controller.dart.example      torn-pda-native/stats/stats_controller.dart;    fi
+          # Android Firebase config stub for APK build
+          if [ ! -f ../android/app/google-services.json ]; then cp ../android/app/google-services.json.example ../android/app/google-services.json; fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build debug APK
+        run: flutter build apk --debug

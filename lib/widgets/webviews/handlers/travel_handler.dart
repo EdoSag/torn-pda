@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:html/dom.dart' as dom;
@@ -14,6 +13,7 @@ import 'package:torn_pda/models/travel/foreign_stock_out.dart';
 import 'package:torn_pda/providers/api/api_v1_calls.dart';
 import 'package:torn_pda/providers/settings_provider.dart';
 import 'package:torn_pda/utils/js_snippets/js_snippets.dart';
+import 'package:torn_pda/utils/js_snippets/remote_snippets.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 
 class ForeignStocksWebviewHandler {
@@ -76,10 +76,13 @@ class ForeignStocksWebviewHandler {
   Future<void> _handleTravelUI() async {
     final shouldHideInfo = await Prefs().getRemoveForeignItemsDetails();
     final preventBasketKeyboard = await Prefs().getPreventBasketKeyboard();
+    final foreignStocksBuyMaxEnabled = await Prefs().getForeignStocksBuyMaxEnabled();
     if (shouldHideInfo) {
       await webViewController?.evaluateJavascript(source: hideItemInfoJS());
     }
-    await webViewController?.evaluateJavascript(source: buyMaxAbroadJS(preventBasketKeyboard: preventBasketKeyboard));
+    if (foreignStocksBuyMaxEnabled) {
+      await webViewController?.evaluateJavascript(source: buyMaxAbroadJS(preventBasketKeyboard: preventBasketKeyboard));
+    }
   }
 
   Future<void> _sendStockInformation(dom.Document document) async {
@@ -181,64 +184,6 @@ class ForeignStocksWebviewHandler {
           await _printItemFoundFlutterSide(stockModel);
         }
 
-        Future<void> sendToYATA() async {
-          String error = "";
-          try {
-            final response = await http
-                .post(
-                  Uri.parse('https://yata.yt/api/v1/travel/import/'),
-                  headers: <String, String>{
-                    'Content-Type': 'application/json; charset=UTF-8',
-                  },
-                  body: foreignStockOutModelToJson(stockModel),
-                )
-                .timeout(const Duration(seconds: 8));
-
-            log("YATA replied with status code ${response.statusCode}. Response: ${response.body}");
-            if (response.statusCode != 200) {
-              error = "Replied with status code ${response.statusCode}. Response: ${response.body}";
-            }
-          } catch (e) {
-            log('Error sending request to YATA: $e');
-            error = "Catched exception: $e";
-          }
-
-          if (error.isNotEmpty) {
-            if (!Platform.isWindows) FirebaseCrashlytics.instance.log("Error sending Foreign Stocks to YATA");
-            if (!Platform.isWindows) FirebaseCrashlytics.instance.recordError(error, null);
-            logToUser("Error sending Foreign Stocks to YATA");
-          }
-        }
-
-        Future<void> sendToPrometheus() async {
-          String error = "";
-          try {
-            final response = await http
-                .post(
-                  Uri.parse('https://api.prombot.co.uk/api/travel'),
-                  headers: <String, String>{
-                    'Content-Type': 'application/json; charset=UTF-8',
-                  },
-                  body: foreignStockOutModelToJson(stockModel),
-                )
-                .timeout(const Duration(seconds: 8));
-
-            log("Prometeus replied with status code ${response.statusCode}. Response: ${response.body}");
-            if (response.statusCode != 200) {
-              error = "Replied with status code ${response.statusCode}. Response: ${response.body}";
-            }
-          } catch (e) {
-            log('Error sending request to Prometheus: $e');
-            error = "Catched exception: $e";
-          }
-
-          if (error.isNotEmpty) {
-            if (!Platform.isWindows) FirebaseCrashlytics.instance.log("Error sending Foreign Stocks to Prometheus");
-            if (!Platform.isWindows) FirebaseCrashlytics.instance.recordError(error, null);
-            logToUser("Error sending Foreign Stocks to Prometheus");
-          }
-        }
-
         if (stockModel.items.isEmpty) {
           log("Foreign stocks are empty!!");
           return;
@@ -250,12 +195,17 @@ class ForeignStocksWebviewHandler {
         }
         _foreignStocksSentTime = DateTime.now();
 
+        final body = foreignStockOutModelToJson(stockModel);
         var futures = <Future>[];
         if (settingsProvider.yataUploadEnabledRemoteConfig) {
-          futures.add(sendToYATA());
+          futures.add(
+            _uploadStocks(provider: "YATA", url: Uri.parse('https://yata.yt/api/v1/travel/import/'), body: body),
+          );
         }
         if (settingsProvider.prometheusUploadEnabledRemoteConfig) {
-          futures.add(sendToPrometheus());
+          futures.add(
+            _uploadStocks(provider: "Prometheus", url: Uri.parse('https://api.prombot.co.uk/api/travel'), body: body),
+          );
         }
 
         await Future.wait(futures);
@@ -263,6 +213,47 @@ class ForeignStocksWebviewHandler {
         // Error parsing
       }
     }
+  }
+
+  /// Fire-and-forget upload with a couple of retries
+  Future<void> _uploadStocks({required String provider, required Uri url, required String body}) async {
+    const retryDelays = [Duration(seconds: 2), Duration(seconds: 5)];
+    String error = "";
+
+    for (int attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        final response = await http
+            .post(url, headers: const <String, String>{'Content-Type': 'application/json; charset=UTF-8'}, body: body)
+            .timeout(const Duration(seconds: 12));
+
+        log("$provider replied with status code ${response.statusCode}. Response: ${response.body}");
+        if (response.statusCode == 200) return;
+        error = "Status code ${response.statusCode}";
+        // Client errors... does not make sense to retry
+        if (response.statusCode < 500) break;
+      } on TimeoutException {
+        error = "Timed out";
+      } on SocketException catch (e) {
+        error = "Connection error: $e";
+      } on http.ClientException catch (e) {
+        error = "Connection error: $e";
+      } catch (e) {
+        error = "Catched exception: $e";
+        break;
+      }
+
+      if (attempt < retryDelays.length) {
+        await Future.delayed(retryDelays[attempt]);
+      }
+    }
+
+    log('Error sending Foreign Stocks to $provider: $error');
+    final String details = "$appVersion $provider: $error";
+    analytics?.logEvent(
+      name: 'foreign_stock_upload_failed',
+      parameters: {'error': details.length > 99 ? details.substring(0, 99) : details},
+    );
+    logToUser("Error sending Foreign Stocks to $provider");
   }
 
   Future<void> _printItemFoundFlutterSide(ForeignStockOutModel stockModel) async {
@@ -295,7 +286,8 @@ class ForeignStocksWebviewHandler {
         String name = itemNames[item.id.toString()] ?? "Unknown";
         if (name.length > 24) name = "${name.substring(0, 21)}...";
         logMsg.writeln(
-            '${item.id.toString().padRight(10)} | ${name.padRight(25)} | ${item.cost.toString().padRight(15)} | ${item.quantity}');
+          '${item.id.toString().padRight(10)} | ${name.padRight(25)} | ${item.cost.toString().padRight(15)} | ${item.quantity}',
+        );
       }
     } else {
       logMsg.writeln('${"ID".padRight(10)} | ${"Cost".padRight(15)} | Quantity');

@@ -12,6 +12,7 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
 import * as admin from "firebase-admin";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 // API URLs
 const YATA_API_URL = "https://yata.yt/api/v1/travel/export/";
@@ -139,7 +140,7 @@ async function updateStock(currentStockData: any, timestamp: number, source: str
         restockElapsed: restockElapsed,
       };
 
-      transaction.set(docRef, newData, { merge: true });
+      transaction.set(docRef, newData);
     });
   } catch (e) {
     logger.warn(`ERROR updating stock ${codeName}: \n${e}`);
@@ -465,70 +466,64 @@ export const fillRestocks = onSchedule({
 });
 
 // UTIL FUNCTION
-// Cleans up any periodicMap with more than 200 entries in case we have a leak in any other methods
+// Safety net for periodicMap leaks
 export const oneTimeClean = onSchedule({
   schedule: "0 3 * * *", // At 03:00 every day
   region: "us-east4",
-  memory: "256MiB",
-  timeoutSeconds: 300
+  memory: "512MiB",
+  timeoutSeconds: 540
 }, async () => {
   logger.info("🧹 ONETIMECLEAN STARTING");
 
   const db = admin.firestore();
-  const batchSize = 500;
-  let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+
+  const CONCURRENCY = 5;
+
+  const idsSnapshot = await db.collection("stocks-main")
+    .select()
+    .orderBy(FieldPath.documentId())
+    .get();
+
+  const docIds = idsSnapshot.docs.map((d) => d.id);
+  logger.info(`📊 Analyzing ${docIds.length} stock documents for periodicMap cleanup`);
+
   let numberCleared = 0;
   let totalProcessed = 0;
 
-  while (true) {
-    let query = db.collection("stocks-main")
-      .orderBy(admin.firestore.FieldPath.documentId())
-      .limit(batchSize);
+  const cleanOne = async (docId: string) => {
+    const docRef = db.collection("stocks-main").doc(docId);
+    const snapshot = await docRef.get();
+    totalProcessed++;
 
-    if (lastDoc) {
-      query = query.startAfter(lastDoc);
+    const bigMap = snapshot.get("periodicMap");
+    if (!bigMap || typeof bigMap !== "object") return;
+
+    const allKeys = Object.keys(bigMap)
+      .map(Number)
+      .filter((k) => !isNaN(k))
+      .sort((a, b) => b - a);
+
+    if (allKeys.length <= MAX_ENTRIES) return;
+
+    const filteredMap: { [key: number]: number } = {};
+    for (const k of allKeys.slice(0, MAX_ENTRIES)) {
+      filteredMap[k] = bigMap[k];
     }
 
-    const snapshot = await query.get();
-    if (snapshot.empty) {
-      break;
-    }
+    await docRef.update({ periodicMap: filteredMap });
+    numberCleared++;
+    logger.info(`🔧 Cleaned ${docId}: reduced from ${allKeys.length} to ${MAX_ENTRIES} entries`);
+  };
 
-    logger.info(`📊 Analyzing ${snapshot.size} stock documents for periodicMap cleanup`);
-
-    const batch = db.batch();
-    let batchOps = 0;
-
-    for (const doc of snapshot.docs) {
-      const docData = doc.data();
-      if (docData.periodicMap && typeof docData.periodicMap === "object") {
-        const bigMap = docData.periodicMap;
-        const allKeys = Object.keys(bigMap)
-          .map(Number)
-          .filter((k) => !isNaN(k))
-          .sort((a, b) => b - a);
-
-        if (allKeys.length > 200) {
-          const keysToKeep = allKeys.slice(0, 200);
-          const filteredMap: { [key: number]: number } = {};
-          for (const k of keysToKeep) {
-            filteredMap[k] = bigMap[k];
-          }
-
-          batch.set(doc.ref, { periodicMap: filteredMap }, { merge: true });
-          batchOps++;
-          logger.info(`🔧 Cleaned ${doc.id}: reduced from ${allKeys.length} to 200 entries`);
-          numberCleared++;
-        }
+  for (let i = 0; i < docIds.length; i += CONCURRENCY) {
+    const group = docIds.slice(i, i + CONCURRENCY);
+    await Promise.all(group.map(async (docId) => {
+      try {
+        await cleanOne(docId);
+      } catch (e) {
+        logger.warn(`⚠️ Could not clean ${docId}: ${e}`);
       }
-    }
-
-    if (batchOps > 0) {
-      await batch.commit();
-    }
-
-    totalProcessed += snapshot.size;
-    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    }));
   }
 
   logger.info(`✅ Cleanup completed: ${numberCleared} documents cleaned out of ${totalProcessed} total`);
@@ -539,8 +534,8 @@ export const oneTimeClean = onSchedule({
 export const deleteOldStocks = onSchedule({
   schedule: "0 4 * * 0",
   region: "us-east4",
-  memory: "256MiB",
-  timeoutSeconds: 300
+  memory: "512MiB",
+  timeoutSeconds: 540
 }, async () => {
   logger.info("🗑️ DELETEOLDSTOCKS STARTING");
 
@@ -619,6 +614,13 @@ export const deleteOldStocks = onSchedule({
 
     logger.info(`✅ Successfully deleted ${snapshot.size} old stocks (${totalStocksCount - snapshot.size} remaining)`);
 
+    const deletedCodeNames = snapshot.docs.map(doc => doc.id);
+    try {
+      await cleanupOrphanedUserAlerts(deletedCodeNames, IS_DRY_RUN);
+    } catch (cleanupError) {
+      logger.error(`❌ Error during user alert cleanup (stock deletion still succeeded): ${cleanupError}`);
+    }
+
   } catch (error) {
     logger.error(`❌ Error during deleteOldStocks: ${error}`);
     logger.error(`❌ Stack trace: ${error.stack}`);
@@ -627,6 +629,100 @@ export const deleteOldStocks = onSchedule({
 
   return null;
 });
+
+/**
+ * Removes orphaned codeNames from players `restockActiveAlerts` map field
+ * After `deleteOldStocks` removes a batch of stocks that have been
+ * forgotten for 90+ days, so users no longer hold subscriptions to items that
+ * no longer exist in the providers
+ */
+async function cleanupOrphanedUserAlerts(deletedCodeNames: string[], isDryRun: boolean) {
+  if (deletedCodeNames.length === 0) {
+    logger.info("No deleted stocks to propagate to user alerts, skipping");
+    return;
+  }
+
+  logger.info(`Starting user alert cleanup for ${deletedCodeNames.length} deleted stocks (dryRun=${isDryRun})`);
+  const startMs = Date.now();
+
+  const deletedSet = new Set(deletedCodeNames);
+  const db = admin.firestore();
+  const playersRef = db.collection("players");
+  const batchSize = 500;
+  const MAX_WRITES_PER_BATCH = 500;
+
+  let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let playersScanned = 0;
+  let playersUpdated = 0;
+  let keysRemoved = 0;
+
+  let currentBatch = db.batch();
+  let writeCount = 0;
+  const pendingCommits: Promise<any>[] = [];
+
+  while (true) {
+    let query: FirebaseFirestore.Query = playersRef
+      .select("restockActiveAlerts")
+      .orderBy(FieldPath.documentId())
+      .limit(batchSize);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    for (const doc of snapshot.docs) {
+      playersScanned++;
+      const alerts = doc.get("restockActiveAlerts");
+      if (!alerts || typeof alerts !== "object") continue;
+
+      const matched: string[] = [];
+      for (const key of Object.keys(alerts)) {
+        if (deletedSet.has(key)) matched.push(key);
+      }
+      if (matched.length === 0) continue;
+
+      playersUpdated++;
+      keysRemoved += matched.length;
+
+      if (isDryRun) {
+        logger.info(`Would remove ${matched.length} keys from player ${doc.id}: ${matched.join(", ")}`);
+        continue;
+      }
+
+      const updatePayload: { [path: string]: FirebaseFirestore.FieldValue } = {};
+      for (const key of matched) {
+        updatePayload[`restockActiveAlerts.${key}`] = FieldValue.delete();
+      }
+      currentBatch.update(doc.ref, updatePayload);
+      writeCount++;
+
+      if (writeCount === MAX_WRITES_PER_BATCH) {
+        pendingCommits.push(currentBatch.commit());
+        currentBatch = db.batch();
+        writeCount = 0;
+      }
+    }
+
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+  }
+
+  if (!isDryRun && writeCount > 0) {
+    pendingCommits.push(currentBatch.commit());
+  }
+
+  if (pendingCommits.length > 0) {
+    await Promise.all(pendingCommits);
+  }
+
+  const durationSec = ((Date.now() - startMs) / 1000).toFixed(1);
+  logger.info(
+    `✅ User alert cleanup completed in ${durationSec}s — scanned ${playersScanned} players, ` +
+    `${isDryRun ? "would update" : "updated"} ${playersUpdated} players, ${isDryRun ? "would remove" : "removed"} ${keysRemoved} keys`
+  );
+}
 
 // Scheduled function to clean up obsolete restock entries
 export const cleanupObsoleteRestocks = onSchedule("0 2 * * *", async () => {

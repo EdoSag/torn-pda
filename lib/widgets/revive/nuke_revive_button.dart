@@ -1,15 +1,13 @@
 import 'package:bot_toast/bot_toast.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:torn_pda/models/profile/own_profile_model.dart';
+import 'package:torn_pda/models/profile/revive_services/revive_provider.dart';
 import 'package:torn_pda/providers/api/api_v1_calls.dart';
 import 'package:torn_pda/providers/settings_provider.dart';
 import 'package:torn_pda/providers/theme_provider.dart';
 import 'package:torn_pda/providers/webview_provider.dart';
 import 'package:torn_pda/utils/external/nuke_revive.dart';
-import 'package:torn_pda/widgets/webviews/webview_stackview.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:torn_pda/widgets/revive/revive_provider_info_text.dart';
 
 class NukeReviveButton extends StatefulWidget {
   final ThemeProvider? themeProvider;
@@ -50,15 +48,13 @@ class NukeReviveButtonState extends State<NukeReviveButton> {
   }
 }
 
-Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, OwnProfileExtended? user) {
+Future<void> openNukeReviveDialog(BuildContext ctx, ThemeProvider themeProvider, OwnProfileExtended? user) {
   return showDialog<void>(
-    context: _,
+    context: ctx,
     barrierDismissible: false, // user must tap button!
     builder: (BuildContext context) {
       return AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 0.0,
         backgroundColor: Colors.transparent,
         content: SingleChildScrollView(
@@ -66,23 +62,12 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
             children: <Widget>[
               SingleChildScrollView(
                 child: Container(
-                  padding: const EdgeInsets.only(
-                    top: 45,
-                    bottom: 16,
-                    left: 16,
-                    right: 16,
-                  ),
+                  padding: const EdgeInsets.only(top: 45, bottom: 16, left: 16, right: 16),
                   margin: const EdgeInsets.only(top: 15),
                   decoration: BoxDecoration(
                     color: themeProvider.secondBackground,
                     borderRadius: BorderRadius.circular(16),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 10.0,
-                        offset: Offset(0.0, 10.0),
-                      ),
-                    ],
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10.0, offset: Offset(0.0, 10.0))],
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min, // To make the card compact
@@ -101,72 +86,7 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
                           ],
                         ),
                       ),
-                      Flexible(
-                        child: RichText(
-                          text: TextSpan(
-                            text: "Nuke is a premium Torn reviving service consisting in more than "
-                                "300 revivers. You can find more information in the ",
-                            style: TextStyle(
-                              color: context.read<ThemeProvider>().mainText,
-                              fontSize: 13,
-                            ),
-                            children: <InlineSpan>[
-                              WidgetSpan(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    Navigator.of(context).pop();
-                                    context.read<WebViewProvider>().openBrowserPreference(
-                                          context: context,
-                                          url: 'https://www.torn.com/forums.php#/p=threads&f=14&t=16160853&b=0&a=0',
-                                          browserTapType: BrowserTapType.short,
-                                        );
-                                  },
-                                  onLongPress: () {
-                                    Navigator.of(context).pop();
-                                    context.read<WebViewProvider>().openBrowserPreference(
-                                          context: context,
-                                          url: 'https://www.torn.com/forums.php#/p=threads&f=14&t=16160853&b=0&a=0',
-                                          browserTapType: BrowserTapType.long,
-                                        );
-                                  },
-                                  child: const Text(
-                                    'forum thread',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.blue,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const TextSpan(text: ' or in the Central Hospital '),
-                              TextSpan(
-                                text: 'Discord server',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
-                                  fontSize: 13,
-                                ),
-                                recognizer: TapGestureRecognizer()
-                                  ..onTap = () async {
-                                    const url = 'https://discord.gg/qSHjTXx';
-                                    if (await canLaunchUrl(Uri.parse(url))) {
-                                      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-                                    }
-                                  },
-                              ),
-                              TextSpan(
-                                text: "\n\nEach revive must be paid directly to the reviver (unless under a "
-                                    "contract with Nuke) and costs ${context.read<SettingsProvider>().reviveNukePrice}.",
-                              ),
-                              const TextSpan(
-                                text: "\n\nPlease keep in mind if you don't pay for the requested revive, "
-                                    "you risk getting blocked from Nuke!",
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                      Flexible(child: ReviveProviderInfoText(provider: ReviveProviders.nuke)),
                       const SizedBox(height: 15),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
@@ -184,12 +104,10 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
 
                               if (user == null) {
                                 BotToast.showText(
-                                  text: 'There was an error contacting Torn API to get your current status, '
+                                  text:
+                                      'There was an error contacting Torn API to get your current status, '
                                       'please try again after a while!',
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white,
-                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, color: Colors.white),
                                   contentColor: Colors.red[800]!,
                                   duration: const Duration(seconds: 5),
                                   contentPadding: const EdgeInsets.all(10),
@@ -200,12 +118,10 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
 
                               if (user!.status!.color != 'red' && user!.status!.state != "Hospital") {
                                 BotToast.showText(
-                                  text: 'According to Torn you are not currently hospitalized, please wait a '
+                                  text:
+                                      'According to Torn you are not currently hospitalized, please wait a '
                                       'few seconds and try again!',
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white,
-                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, color: Colors.white),
                                   contentColor: Colors.red[800]!,
                                   duration: const Duration(seconds: 5),
                                   contentPadding: const EdgeInsets.all(10),
@@ -225,7 +141,8 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
                                 String message = 'Revive requested!';
                                 Color messageColor = Colors.green;
                                 if (!success) {
-                                  message = 'There was an error contacting Nuke, try again later '
+                                  message =
+                                      'There was an error contacting Nuke, try again later '
                                       "or contact them through Central Hospital's Discord "
                                       'server!';
                                   messageColor = Colors.red.shade800;
@@ -233,10 +150,7 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
 
                                 BotToast.showText(
                                   text: message,
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white,
-                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, color: Colors.white),
                                   contentColor: messageColor,
                                   duration: const Duration(seconds: 5),
                                   contentPadding: const EdgeInsets.all(10),
@@ -252,7 +166,7 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
                             },
                           ),
                         ],
-                      )
+                      ),
                     ],
                   ),
                 ),
@@ -266,13 +180,7 @@ Future<void> openNukeReviveDialog(BuildContext _, ThemeProvider themeProvider, O
                   child: CircleAvatar(
                     backgroundColor: themeProvider.secondBackground,
                     radius: 22,
-                    child: SizedBox(
-                      height: 34,
-                      width: 34,
-                      child: Image.asset(
-                        'images/icons/nuke-revive.png',
-                      ),
-                    ),
+                    child: SizedBox(height: 34, width: 34, child: Image.asset('images/icons/nuke-revive.png')),
                   ),
                 ),
               ),

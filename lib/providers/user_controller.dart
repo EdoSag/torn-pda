@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:torn_pda/models/profile/own_profile_basic.dart';
 import 'package:torn_pda/providers/api/api_v1_calls.dart';
 import 'package:torn_pda/providers/sendbird_controller.dart';
+import 'package:torn_pda/utils/crashlytics_identity.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 
 class UserController extends GetxController {
@@ -21,7 +22,9 @@ class UserController extends GetxController {
   int get safePlayerId => playerId;
   String get safePlayerName => playerName;
 
-  Future<void> loadPreferences() async {
+  /// Pass [refreshFromApi] as false to load from local storage only, and call
+  /// [refreshUserFromApi] later (e.g. once connectivity has been checked)
+  Future<void> loadPreferences({bool refreshFromApi = true}) async {
     _basic = OwnProfileBasic();
 
     final savedUser = await Prefs().getOwnDetails();
@@ -36,11 +39,18 @@ class UserController extends GetxController {
     _syncFromBasic();
     await _setupAlternativeKeys();
 
-    if (_basic!.userApiKeyValid == true) {
+    if (refreshFromApi && _basic!.userApiKeyValid == true) {
       await _refreshFromAPI();
     }
 
     _isLoaded = true;
+    update();
+  }
+
+  /// Network half of [loadPreferences]. No-op if we have no valid key stored
+  Future<void> refreshUserFromApi() async {
+    if (_basic?.userApiKeyValid != true) return;
+    await _refreshFromAPI();
     update();
   }
 
@@ -68,6 +78,8 @@ class UserController extends GetxController {
     if (_basic?.job?.companyId != null) {
       companyId = _basic!.job!.companyId!;
     }
+
+    publishCrashlyticsIdentity(playerId);
   }
 
   Future<void> _setupAlternativeKeys() async {

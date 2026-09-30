@@ -22,11 +22,13 @@ import 'package:torn_pda/providers/settings_provider.dart';
 import 'package:torn_pda/providers/theme_provider.dart';
 import 'package:torn_pda/providers/userscripts_provider.dart';
 import 'package:torn_pda/providers/webview_provider.dart';
+import 'package:torn_pda/utils/script_storage.dart';
 import 'package:torn_pda/utils/shared_prefs.dart';
 import 'package:torn_pda/utils/user_helper.dart';
 import 'package:torn_pda/widgets/settings/chat_highlight_word_dialog.dart';
 import 'package:torn_pda/widgets/pda_browser_icon.dart';
 import 'package:torn_pda/pages/settings/locked_tab_exceptions_page.dart';
+import 'package:torn_pda/widgets/webviews/browser_text_live_panel.dart';
 import 'package:torn_pda/widgets/webviews/tabs_wipe_dialog.dart';
 import 'package:torn_pda/widgets/webviews/fullscreen_header_doubletap_warning.dart';
 import 'package:torn_pda/widgets/webviews/webview_fab.dart';
@@ -90,12 +92,14 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
       _textScale(),
       _chat(),
       _travel(),
+      _shops(),
       _energyExpenditureWarning(),
       _travelExpenditureWarning(),
       _profile(),
       if (Platform.isIOS) _linkPreview(),
       _gestures(),
       _maintenance(),
+      _memory(),
     ];
 
     // Filter out empty sections
@@ -109,15 +113,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
     List<Widget> finalSections = [];
     for (int i = 0; i < sections.length; i++) {
       if (i > 0) {
-        finalSections.add(
-          const Column(
-            children: [
-              SizedBox(height: 20),
-              Divider(),
-              SizedBox(height: 10),
-            ],
-          ),
-        );
+        finalSections.add(const Column(children: [SizedBox(height: 20), Divider(), SizedBox(height: 10)]));
       }
 
       finalSections.add(sections[i]);
@@ -155,10 +151,10 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
     return Container(
       color: _themeProvider.currentTheme == AppTheme.light
           ? MediaQuery.orientationOf(context) == Orientation.portrait
-              ? Colors.blueGrey
-              : isStatusBarShown
-                  ? _themeProvider.statusBar
-                  : _themeProvider.canvas
+                ? Colors.blueGrey
+                : isStatusBarShown
+                ? _themeProvider.statusBar
+                : _themeProvider.canvas
           : _themeProvider.canvas,
       child: SafeArea(
         right: _webViewProvider.webViewSplitActive && _webViewProvider.splitScreenPosition == WebViewSplitPosition.left,
@@ -167,10 +163,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           backgroundColor: _themeProvider.canvas,
           appBar: _settingsProvider.appBarTop ? buildAppBar() : null,
           bottomNavigationBar: !_settingsProvider.appBarTop
-              ? SizedBox(
-                  height: AppBar().preferredSize.height,
-                  child: buildAppBar(),
-                )
+              ? SizedBox(height: AppBar().preferredSize.height, child: buildAppBar())
               : null,
           body: Container(
             color: _themeProvider.canvas,
@@ -184,11 +177,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                     child: SingleChildScrollView(
                       controller: _scrollController,
                       child: Column(
-                        children: [
-                          const SizedBox(height: 15),
-                          ...buildFilteredSections(),
-                          const SizedBox(height: 40),
-                        ],
+                        children: [const SizedBox(height: 15), ...buildFilteredSections(), const SizedBox(height: 40)],
                       ),
                     ),
                   );
@@ -224,11 +213,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 padding: const EdgeInsets.only(top: 4.0),
                 child: Text(
                   "There are three browser styles available, all sharing the same functionality. Please have a look at the Tips section for more information, or try them for yourself!",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ),
             ],
@@ -264,11 +249,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
                     'If enabled, browser tabs will be placed at the very bottom of the browser window (below the "close" button and navigation controls)',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                   ),
                 ),
               ],
@@ -299,6 +280,41 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
         ),
       ),
       SearchableRow(
+        label: "Restore scroll on reload",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("Restore scroll on reload")),
+                  Switch(
+                    value: _settingsProvider.restoreScrollAfterReload,
+                    onChanged: (value) {
+                      setState(() {
+                        _settingsProvider.restoreScrollAfterReload = value;
+                      });
+                    },
+                    activeTrackColor: Colors.lightGreenAccent,
+                    activeThumbColor: Colors.green,
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  'When reloading a page, the browser will return to the same scroll position it was at before the reload',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      SearchableRow(
         label: "Refresh method",
         searchText: _searchText,
         child: Padding(
@@ -317,13 +333,9 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 padding: const EdgeInsets.only(top: 4.0),
                 child: Text(
                   'The browser has pull to refresh functionality. However, you can get an extra refresh icon if it\'s useful for certain situations (e.g. jail or hospital)',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
-              )
+              ),
             ],
           ),
         ),
@@ -348,24 +360,51 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
                     'When using the default browser style, forward and backward navigation arrows will be shown by default when using a wide enough screen. You can disable them or make them also visible on narrower screens (bear in mind that this might interfere with the space available for page title)',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                   ),
                 ),
               ],
             ),
           ),
         ),
+      SearchableRow(
+        label: "Dismiss keyboard on close",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("Dismiss keyboard on close")),
+                  Switch(
+                    value: _webViewProvider.dismissKeyboardOnBrowserClose,
+                    onChanged: (value) {
+                      setState(() {
+                        _webViewProvider.dismissKeyboardOnBrowserClose = value;
+                      });
+                    },
+                    activeTrackColor: Colors.lightGreenAccent,
+                    activeThumbColor: Colors.green,
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  "Automatically dismiss the keyboard when the browser is sent to the background",
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     ];
 
-    return buildSectionWithRows(
-      title: 'GENERAL',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'GENERAL', rows: rows, searchText: _searchText);
   }
 
   Widget _userScripts() {
@@ -396,11 +435,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'You can load custom user scripts in the browser (this feature does not currently work when using the browser for chaining)',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -447,11 +482,9 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                       _userScriptsProvider.showSafeModeWarning();
                       return;
                     }
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (BuildContext context) => const UserScriptsPage(),
-                      ),
-                    );
+                    Navigator.of(
+                      context,
+                    ).push(MaterialPageRoute(builder: (BuildContext context) => const UserScriptsPage()));
                   },
                 ),
               ],
@@ -460,11 +493,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
         ),
     ];
 
-    return buildSectionWithRows(
-      title: 'USER SCRIPTS',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'USER SCRIPTS', rows: rows, searchText: _searchText);
   }
 
   Widget _tabs() {
@@ -477,11 +506,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           padding: const EdgeInsets.fromLTRB(20, 5, 20, 5),
           child: Text(
             'Tabs might increase memory and processor usage; be sure that you get familiar with how tabs work (see the Tips section). It is highly recommended to use tabs to improve your Torn PDA experience.',
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
+            style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
           ),
         ),
       ),
@@ -538,11 +563,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
                     "By default, when you open a new tab via the 'open in new tab' option, when long-pressing a link, the browser will change to the newly created tab. If you disable this, the new tab will be created but you will remain in the current page",
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                   ),
                 ),
               ],
@@ -577,11 +598,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
                     'Removes unused tabs periodically (checks are performed when the app starts and then once every 24 hours)',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                   ),
                 ),
                 if (_webViewProvider.removeUnusedTabs)
@@ -675,12 +692,8 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   ],
                 ),
                 Text(
-                  'If active (recommended) not all tabs will load in memory upon browser initialization. Instead, they will retrieve the web content when first used (tapped). This could add a small delay when the tab is pressed the first time, but should improve overall browser performance. Also, tabs that have not been used for 24 hours will be deactivated to reduce memory consumption, and will be reactivated when you switch back to them.',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  'If active (recommended) not all tabs will load in memory upon browser initialization. Instead, they will retrieve the web content when first used (tapped). This could add a small delay when the tab is pressed the first time, but should improve overall browser performance. Also, tabs that have not been used for a while will be deactivated to reduce memory consumption, and will be reactivated when you switch back to them (you can change how long in the Memory section, at the bottom of this page).',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -716,11 +729,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   'Allow to temporarily hide tabs by swiping up/down in the title bar',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -735,10 +744,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Padding(
-                  padding: EdgeInsets.all(8.0),
-                  child: Text("Select hide bar color"),
-                ),
+                const Padding(padding: EdgeInsets.all(8.0), child: Text("Select hide bar color")),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Color(_settingsProvider.tabsHideBarColor).withAlpha(255),
@@ -761,9 +767,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               const SizedBox(height: 30),
               const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('TAB LOCKS', style: TextStyle(fontSize: 10)),
-                ],
+                children: [Text('TAB LOCKS', style: TextStyle(fontSize: 10))],
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -788,11 +792,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 5),
                 child: Text(
                   'If enabled, a short message with a lock icon will appear whenever the lock status of a tab is changed or when the app is impeding navigation or tab movement due to its lock condition. NOTE: without warning, you will NOT be able to override navigation with full locks!',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ),
               Padding(
@@ -818,11 +818,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 5),
                 child: Text(
                   'If enabled, a navigation attempt from a tab with a full lock will open a new tab in the background (the tab will be added but the browser will not switch to it automatically)',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ),
             ],
@@ -843,9 +839,8 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   onPressed: () async {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (BuildContext context) => LockedTabsNavigationExceptionsPage(
-                          settingsProvider: _settingsProvider,
-                        ),
+                        builder: (BuildContext context) =>
+                            LockedTabsNavigationExceptionsPage(settingsProvider: _settingsProvider),
                       ),
                     );
                   },
@@ -856,11 +851,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
         ),
     ];
 
-    return buildSectionWithRows(
-      title: 'TABS',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'TABS', rows: rows, searchText: _searchText);
   }
 
   Widget _fab() {
@@ -891,11 +882,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 "Shows a Floating Action Button while using the browser, which adds several action buttons and gestures to enhance navigation. NOTE: it is highly recommended that you read about how to use this button in the Tips section!",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -921,11 +908,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 5),
                   child: Text(
                     "Dictates where to expand the option buttons when the FAB is tapped",
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                   ),
                 ),
               ],
@@ -957,11 +940,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   "Only show the FAB when in full screen mode",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -1000,11 +979,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   "Adjust the number of action buttons displayed when the FAB is expanded.",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -1121,11 +1096,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
         ),
     ];
 
-    return buildSectionWithRows(
-      title: 'FLOATING ACTION BUTON',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'FLOATING ACTION BUTON', rows: rows, searchText: _searchText);
   }
 
   Widget _downloads() {
@@ -1146,11 +1117,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 "Due to the operating system restrictions, Torn PDA can only download files to your app data folder (this is to avoid requesting unnecesary permissions). As this folder can be difficult to access in certain devices, the app can instead initiate a share request so that you can select whether to save your file locally or share it somewhere else",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -1158,11 +1125,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
       ),
     ];
 
-    return buildSectionWithRows(
-      title: 'DOWNLOADS',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'DOWNLOADS', rows: rows, searchText: _searchText);
   }
 
   Widget _fullScreen() {
@@ -1718,11 +1681,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
       ),
     ];
 
-    return buildSectionWithRows(
-      title: 'FULL SCREEN BEHAVIOR',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'FULL SCREEN BEHAVIOR', rows: rows, searchText: _searchText);
   }
 
   Widget _deepLinks() {
@@ -1793,17 +1752,33 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
       ),
     ];
 
-    return buildSectionWithRows(
-      title: 'DEEP LINKS',
-      rows: rows,
-      searchText: _searchText,
+    return buildSectionWithRows(title: 'DEEP LINKS', rows: rows, searchText: _searchText);
+  }
+
+  OverlayEntry? _liveTextOverlay;
+
+  void _openLiveTextPanel() {
+    if (_liveTextOverlay != null) return;
+    // Bring the browser to the front so the user sees the changes, then float the panel on top
+    // We use the root overlay (Navigator) instead of BotToast so the Material Slider has an
+    // Overlay ancestor and the panel survives leaving this settings page
+    _webViewProvider.browserShowInForeground = true;
+    _liveTextOverlay = OverlayEntry(
+      builder: (_) =>
+          Positioned(left: 0, right: 0, bottom: 0, child: BrowserTextLivePanel(onClose: _closeLiveTextPanel)),
     );
+    Overlay.of(context, rootOverlay: true).insert(_liveTextOverlay!);
+  }
+
+  void _closeLiveTextPanel() {
+    _liveTextOverlay?.remove();
+    _liveTextOverlay = null;
   }
 
   Widget _textScale() {
     List<SearchableRow> rows = [
       SearchableRow(
-        label: "Browser text scale",
+        label: "Adjust text size live",
         searchText: _searchText,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15),
@@ -1813,36 +1788,14 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Flexible(child: Text("Browser text scale")),
-                  Row(
-                    children: [
-                      Text(
-                        _settingsProvider.androidBrowserTextScale.toString(),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      Slider(
-                        min: 8,
-                        max: 20,
-                        divisions: 12,
-                        value: _settingsProvider.androidBrowserTextScale.toDouble(),
-                        onChanged: (double value) {
-                          setState(() {
-                            _settingsProvider.changeAndroidBrowserTextScale = value.floor();
-                          });
-                          _webViewProvider.changeTextScale(value.floor());
-                        },
-                      ),
-                    ],
-                  ),
+                  const Flexible(child: Text("Adjust text size live")),
+                  ElevatedButton(onPressed: _openLiveTextPanel, child: const Text("Set")),
                 ],
               ),
               Text(
-                "You can adjust the text scale in the browser to make it easier to read. Be advised that Torn might not follow this setting properly for all fonts in game, so some text might be unreadable.",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                "Opens the browser with a panel to adjust the text zoom while you see the result. "
+                "Tap the X in the panel when you are done.",
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -1850,11 +1803,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
       ),
     ];
 
-    return buildSectionWithRows(
-      title: 'TEXT SCALE',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'TEXT SCALE', rows: rows, searchText: _searchText);
   }
 
   Widget _chat() {
@@ -1919,10 +1868,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("Select words to highlight"),
-                      Text(
-                        "(ONLY CHAT v2.0)",
-                        style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic),
-                      ),
+                      Text("(ONLY CHAT v2.0)", style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic)),
                     ],
                   ),
                 ),
@@ -1948,10 +1894,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("Select highlight color"),
-                      Text(
-                        "(ONLY CHAT v2.0)",
-                        style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic),
-                      ),
+                      Text("(ONLY CHAT v2.0)", style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic)),
                     ],
                   ),
                 ),
@@ -1969,11 +1912,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
         ),
     ];
 
-    return buildSectionWithRows(
-      title: 'CHAT',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'CHAT', rows: rows, searchText: _searchText);
   }
 
   Widget _travel() {
@@ -2004,11 +1943,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'Removes airplane and cloud animation when traveling',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2040,11 +1975,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 "By default, when abroad, you'll see a home icon button that you can double-tap to initiate your travel back to Torn. You can optionally disable it by using this option",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2078,11 +2009,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 "This will hide foreign items information (details such as description, value, "
                 "circulation and its picture) when abroad, even if the item is inadvertently tapped, "
                 "so that buying is quicker",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2115,22 +2042,86 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               Text(
                 "When enabled, clicking the basket icon in vertical mode will not automatically open the keyboard, "
                 "preventing layout shifts.",
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
         ),
       ),
     ];
-    return buildSectionWithRows(
-      title: 'TRAVEL',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'TRAVEL', rows: rows, searchText: _searchText);
+  }
+
+  Widget _shops() {
+    List<SearchableRow> rows = [
+      SearchableRow(
+        label: "Enable BUY MAX in city shops",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("Enable BUY MAX in city shops")),
+                  Switch(
+                    value: _settingsProvider.cityShopsBuyMaxEnabled,
+                    onChanged: (value) {
+                      setState(() {
+                        _settingsProvider.cityShopsBuyMaxEnabled = value;
+                      });
+                    },
+                    activeTrackColor: Colors.lightGreenAccent,
+                    activeThumbColor: Colors.green,
+                  ),
+                ],
+              ),
+              Text(
+                "When enabled, a BUY MAX button injected next to each item in Torn city shops, "
+                "to fill the quantity field with the max you can buy",
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+      ),
+      SearchableRow(
+        label: "Enable BUY MAX in foreign stocks",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("Enable BUY MAX in foreign stocks")),
+                  Switch(
+                    value: _settingsProvider.foreignStocksBuyMaxEnabled,
+                    onChanged: (value) {
+                      setState(() {
+                        _settingsProvider.foreignStocksBuyMaxEnabled = value;
+                      });
+                    },
+                    activeTrackColor: Colors.lightGreenAccent,
+                    activeThumbColor: Colors.green,
+                  ),
+                ],
+              ),
+              Text(
+                "When enabled, a BUY MAX button is injected on foreign stock pages while abroad, filling the "
+                "purchase quantity with the maximum affordable",
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ];
+    return buildSectionWithRows(title: 'SHOPS', rows: rows, searchText: _searchText);
   }
 
   Widget _energyExpenditureWarning() {
@@ -2211,8 +2202,10 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 const Text("Threshold", style: TextStyle(fontSize: 12)),
                 Row(
                   children: [
-                    Text(_settingsProvider.warnAboutExcessEnergyThreshold.toString(),
-                        style: const TextStyle(fontSize: 12)),
+                    Text(
+                      _settingsProvider.warnAboutExcessEnergyThreshold.toString(),
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     Slider(
                       min: 200,
                       max: 1000,
@@ -2231,11 +2224,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           ),
         ),
     ];
-    return buildSectionWithRows(
-      title: 'GYM ENERGY EXPENDITURE WARNING',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'GYM ENERGY EXPENDITURE WARNING', rows: rows, searchText: _searchText);
   }
 
   Widget _travelExpenditureWarning() {
@@ -2352,7 +2341,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               Text(
                 "Warns when your Nerve Bar exceeds a certain threshold to avoid waste.",
                 style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-              )
+              ),
             ],
           ),
         ),
@@ -2423,7 +2412,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               Text(
                 "Warns when your Life Bar exceeds a certain threshold to avoid waste.",
                 style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-              )
+              ),
             ],
           ),
         ),
@@ -2502,11 +2491,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               child: TextFormField(
                 maxLength: 10,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Minimum cash",
-                  isDense: true,
-                  counterText: '',
-                ),
+                decoration: const InputDecoration(labelText: "Minimum cash", isDense: true, counterText: ''),
                 initialValue: _settingsProvider.travelWalletMoneyWarningThreshold.toString(),
                 autovalidateMode: AutovalidateMode.onUserInteraction,
                 validator: (value) {
@@ -2558,13 +2543,48 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ],
               ),
               Text(
-                "If enabled, you'll get a warning when you access the Travel Agency with no drug cooldown time, just in case you forgot",
+                "If enabled, you'll get a warning when you access the Travel Agency with drug cooldown "
+                "below the threshold. Set to 0h to only warn when there's no cooldown at all",
                 style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-              )
+              ),
             ],
           ),
         ),
       ),
+      if (_settingsProvider.travelDrugCooldownWarning)
+        SearchableRow(
+          label: "Threshold",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 25),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Threshold", style: TextStyle(fontSize: 12)),
+                Row(
+                  children: [
+                    Text(
+                      "${_settingsProvider.travelDrugCooldownWarningThreshold}h",
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    Slider(
+                      min: 0,
+                      max: 48,
+                      divisions: 48,
+                      value: _settingsProvider.travelDrugCooldownWarningThreshold.toDouble(),
+                      label: "${_settingsProvider.travelDrugCooldownWarningThreshold}h",
+                      onChanged: (double value) {
+                        setState(() {
+                          _settingsProvider.travelDrugCooldownWarningThreshold = value.round();
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       SearchableRow(
         label: "Booster cooldown warning",
         searchText: _searchText,
@@ -2589,19 +2609,50 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ],
               ),
               Text(
-                "If enabled, you'll get a warning when you access the Travel Agency with no booster cooldown time, just in case you forgot",
+                "If enabled, you'll get a warning when you access the Travel Agency with booster cooldown "
+                "below the threshold. Set to 0h to only warn when there's no cooldown at all",
                 style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-              )
+              ),
             ],
           ),
         ),
       ),
+      if (_settingsProvider.travelBoosterCooldownWarning)
+        SearchableRow(
+          label: "Threshold",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 25),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Threshold", style: TextStyle(fontSize: 12)),
+                Row(
+                  children: [
+                    Text(
+                      "${_settingsProvider.travelBoosterCooldownWarningThreshold}h",
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    Slider(
+                      min: 0,
+                      max: 48,
+                      divisions: 48,
+                      value: _settingsProvider.travelBoosterCooldownWarningThreshold.toDouble(),
+                      label: "${_settingsProvider.travelBoosterCooldownWarningThreshold}h",
+                      onChanged: (double value) {
+                        setState(() {
+                          _settingsProvider.travelBoosterCooldownWarningThreshold = value.round();
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
     ];
-    return buildSectionWithRows(
-      title: 'TRAVEL EXPENDITURE WARNING',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'TRAVEL EXPENDITURE WARNING', rows: rows, searchText: _searchText);
   }
 
   Widget _profile() {
@@ -2632,11 +2683,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'Add additional player information when visiting a profile or attacking someone (e.g. same faction, friendly faction, friends) and estimated stats',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2669,11 +2716,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               Text(
                 'Shows the extra profile information widget (stats, notes, etc.) in the attack screen '
                 '(you might want to disable this if it\'s causing performance issues)',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2695,22 +2738,16 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                     IconButton(
                       icon: const Icon(Icons.keyboard_arrow_right_outlined),
                       onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (BuildContext context) => FriendlyFactionsPage(),
-                          ),
-                        );
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (BuildContext context) => FriendlyFactionsPage()));
                       },
                     ),
                   ],
                 ),
                 Text(
                   'You will see a note if you are visiting the profile of a friendly faction\'s player, or a warning if you are about to attack',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -2743,11 +2780,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   "If enabled, this will show a notes widget in the profile page for those players that you have added notes to (as friends, stakeouts or targets). The notes icon is actionable (tap to change notes)",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -2785,11 +2818,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                       ),
                       Text(
                         "If enabled, this will show the notebook icon even if there are no notes present, so that you quickly add new ones.",
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                        ),
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                       ),
                     ],
                   ),
@@ -2825,11 +2854,40 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   'If enabled, this will show an additional line with the networth of the player you are visiting',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ),
+        ),
+      if (_settingsProvider.extraPlayerInformation)
+        SearchableRow(
+          label: "Show bounty alert",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Flexible(child: Text("Show bounty alert")),
+                    Switch(
+                      value: _settingsProvider.bountyAlertEnabled,
+                      onChanged: (value) {
+                        setState(() {
+                          _settingsProvider.changeBountyAlertEnabled = value;
+                        });
+                      },
+                      activeTrackColor: Colors.lightGreenAccent,
+                      activeThumbColor: Colors.green,
+                    ),
+                  ],
+                ),
+                Text(
+                  'If enabled, a bounty indicator will be shown when visiting the profile of a player who has an active bounty',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -2861,11 +2919,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'If enabled, tapping a player name in a mini-profile window will open a new tab, instead of loading the profile in the same window',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -2906,22 +2960,14 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   'By using this switch you can select if the browser should automatically change to the newly generated tab after tapping a player\'s name in a mini-profile. By setting it to off, you can open several tabs in a row from different mini-profiles.',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
           ),
         ),
     ];
-    return buildSectionWithRows(
-      title: 'PLAYER PROFILES',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'PLAYER PROFILES', rows: rows, searchText: _searchText);
   }
 
   Widget _linkPreview() {
@@ -2951,22 +2997,14 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'Allow browser to open an iOS native preview window when long-pressing a link (only iOS 9+)',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
-              )
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+              ),
             ],
           ),
         ),
       ),
     ];
-    return buildSectionWithRows(
-      title: 'LINKS PREVIEW',
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: 'LINKS PREVIEW', rows: rows, searchText: _searchText);
   }
 
   Widget _maintenance() {
@@ -2987,34 +3025,34 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                     value: Platform.isWindows
                         ? true
                         : _settingsProvider.webviewCacheEnabledRemoteConfig == "user"
-                            ? _settingsProvider.webviewCacheEnabled
-                            : _settingsProvider.webviewCacheEnabledRemoteConfig == "on"
-                                ? true
-                                : false,
+                        ? _settingsProvider.webviewCacheEnabled
+                        : _settingsProvider.webviewCacheEnabledRemoteConfig == "on"
+                        ? true
+                        : false,
                     onChanged: Platform.isWindows
                         ? null
                         : _settingsProvider.webviewCacheEnabledRemoteConfig != "user"
-                            ? null
-                            : (value) {
-                                setState(() {
-                                  _settingsProvider.webviewCacheEnabled = value;
-                                });
-                              },
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _settingsProvider.webviewCacheEnabled = value;
+                            });
+                          },
                     activeTrackColor: Platform.isWindows
                         ? Colors.grey[700]
                         : _settingsProvider.webviewCacheEnabledRemoteConfig == "user"
-                            ? Colors.lightGreenAccent
-                            : Colors.grey[700],
+                        ? Colors.lightGreenAccent
+                        : Colors.grey[700],
                     activeThumbColor: Platform.isWindows
                         ? Colors.grey[700]
                         : _settingsProvider.webviewCacheEnabledRemoteConfig == "user"
-                            ? Colors.green
-                            : Colors.grey[700],
+                        ? Colors.green
+                        : Colors.grey[700],
                     inactiveThumbColor: Platform.isWindows
                         ? Colors.grey[800]
                         : _settingsProvider.webviewCacheEnabledRemoteConfig == "user"
-                            ? null
-                            : Colors.grey[800],
+                        ? null
+                        : Colors.grey[800],
                   ),
                 ],
               ),
@@ -3026,19 +3064,19 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                         style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                       )
                     : _settingsProvider.webviewCacheEnabledRemoteConfig == "user"
-                        ? Text(
-                            "Enable webview cache to improve performance (recommended). Disabling this might be useful if you experience issues with Torn's website cache, such as images loading incorrectly, increased app cached data, chat issues, etc. NOTE: this will only take effect after you restart the app.",
-                            style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-                          )
-                        : _settingsProvider.webviewCacheEnabledRemoteConfig == "on"
-                            ? Text(
-                                "Cache is enabled from PDA and can't be changed right now",
-                                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-                              )
-                            : Text(
-                                "Cache is disabled from PDA and can't be changed right now",
-                                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-                              ),
+                    ? Text(
+                        "Enable webview cache to improve performance (recommended). Disabling this might be useful if you experience issues with Torn's website cache, such as images loading incorrectly, increased app cached data, chat issues, etc. NOTE: this will only take effect after you restart the app.",
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                      )
+                    : _settingsProvider.webviewCacheEnabledRemoteConfig == "on"
+                    ? Text(
+                        "Cache is enabled from PDA and can't be changed right now",
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                      )
+                    : Text(
+                        "Cache is disabled from PDA and can't be changed right now",
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                      ),
               ),
             ],
           ),
@@ -3089,6 +3127,60 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+      SearchableRow(
+        label: "Userscript storage",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Userscript storage"),
+                  ElevatedButton(
+                    child: const Text("Clear"),
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (c) => AlertDialog(
+                          title: const Text("Clear userscript storage?"),
+                          content: const Text(
+                            "This deletes all data your userscripts saved through Torn PDA's native storage. "
+                            "Scripts will rebuild it as needed. It does not touch the scripts themselves.",
+                          ),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text("Cancel")),
+                            TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text("Clear")),
+                          ],
+                        ),
+                      );
+                      if (confirm != true) return;
+                      await ScriptStorage.deleteAll();
+                      BotToast.showText(
+                        text: "Userscript storage cleared",
+                        textStyle: const TextStyle(fontSize: 14, color: Colors.white),
+                        contentColor: Colors.grey[600]!,
+                        duration: const Duration(seconds: 3),
+                        contentPadding: const EdgeInsets.all(10),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  "Deletes data that userscripts saved with Torn PDA's native storage. This is kept separate from the "
+                  "browser cache on purpose, so clearing the cache does not remove it. Scripts rebuild it automatically.",
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -3162,11 +3254,212 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           ),
         ),
       ),
+      SearchableRow(
+        label: "Fast keyboard",
+        searchText: _searchText,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Flexible(child: Text("Fast keyboard")),
+                  Switch(
+                    value: _settingsProvider.androidFastKeyboard,
+                    onChanged: (value) {
+                      setState(() {
+                        _settingsProvider.androidFastKeyboard = value;
+                      });
+                    },
+                    activeTrackColor: Colors.lightGreenAccent,
+                    activeThumbColor: Colors.green,
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  "Prevents the browser from resizing when the keyboard appears, which can improve keyboard speed on some devices. The keyboard will overlay the bottom of the page instead",
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     ];
-    return buildSectionWithRows(
-      title: 'MAINTENANCE',
-      rows: rows,
-      searchText: _searchText,
+    return buildSectionWithRows(title: 'MAINTENANCE', rows: rows, searchText: _searchText);
+  }
+
+  Widget _memory() {
+    final bool parkingAllowed = _webViewProvider.parkBackgroundTabsRemoteConfigAllowed;
+
+    List<SearchableRow> rows = [
+      if (Platform.isAndroid)
+        SearchableRow(
+          label: "Rest tabs while you are away",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Flexible(child: Text("Rest tabs while you are away")),
+                    _parkBackgroundTabsDropdown(enabled: parkingAllowed),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4.0),
+                  child: parkingAllowed
+                      ? Text(
+                          "When you leave Torn PDA, the tabs you are not using let go of their content "
+                          "(chat included) so that the browser stays light while you are away. Tap one and "
+                          "it comes straight back to the same page. This helps to avoid finding every tab "
+                          "reloading itself when you return",
+                          style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                        )
+                      : Text(
+                          "This option is temporarily disabled from Torn PDA and can't be changed right now",
+                          style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      if (_settingsProvider.useTabsFullBrowser)
+        SearchableRow(
+          label: "Sleep unused tabs after",
+          searchText: _searchText,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Flexible(child: Text("Sleep unused tabs after")),
+                    _tabSleepMinutesDropdown(),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4.0),
+                  child: Text(
+                    "Tabs you have not opened for this long are put to sleep in the background, and load "
+                    "again next time you tap them. Needs \"Only load tabs when used\" to be enabled",
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return buildSectionWithRows(title: 'MEMORY', rows: rows, searchText: _searchText);
+  }
+
+  /// "Default" follows whatever Torn PDA recommends at any given moment
+  Widget _parkBackgroundTabsDropdown({required bool enabled}) {
+    const List<String> options = WebViewProvider.parkOverrideOptions;
+    final String current = options.contains(_webViewProvider.parkBackgroundTabsOverride)
+        ? _webViewProvider.parkBackgroundTabsOverride
+        : "default";
+    final String defaultLabel = _webViewProvider.parkBackgroundTabsDefaultRC ? "Default (on)" : "Default (off)";
+
+    return DropdownButton<String>(
+      value: current,
+      items: [
+        DropdownMenuItem(
+          value: "default",
+          child: SizedBox(
+            width: 90,
+            child: Text(defaultLabel, textAlign: TextAlign.right, style: const TextStyle(fontSize: 12)),
+          ),
+        ),
+        const DropdownMenuItem(
+          value: "on",
+          child: SizedBox(
+            width: 90,
+            child: Text("On", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
+          ),
+        ),
+        const DropdownMenuItem(
+          value: "off",
+          child: SizedBox(
+            width: 90,
+            child: Text("Off", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
+          ),
+        ),
+      ],
+      onChanged: !enabled
+          ? null
+          : (value) {
+              if (value == null) return;
+              setState(() {
+                _webViewProvider.parkBackgroundTabsOverride = value;
+              });
+            },
+    );
+  }
+
+  /// 0 follows whatever Torn PDA recommends at any given moment
+  Widget _tabSleepMinutesDropdown() {
+    const List<int> options = WebViewProvider.tabSleepMinutesOptions;
+    final int current = options.contains(_webViewProvider.tabSleepMinutesOverride)
+        ? _webViewProvider.tabSleepMinutesOverride
+        : 0;
+
+    // The default can be any value coming from Remote Config
+    String label(int minutes) {
+      if (minutes < 60) return minutes == 1 ? "1 minute" : "$minutes minutes";
+      final int hours = minutes ~/ 60;
+      final int rest = minutes % 60;
+      final String hoursLabel = hours == 1 ? "1 hour" : "$hours hours";
+      return rest == 0 ? hoursLabel : "$hoursLabel $rest min";
+    }
+
+    return DropdownButton<int>(
+      value: current,
+      items: [
+        DropdownMenuItem(
+          value: 0,
+          child: SizedBox(
+            width: 130,
+            child: Text(
+              "Default (${label(_webViewProvider.tabSleepMinutesDefaultRC)})",
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+        for (final minutes in options.skip(1))
+          DropdownMenuItem(
+            value: minutes,
+            child: SizedBox(
+              width: 130,
+              child: Text(
+                label(minutes),
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+      ],
+      onChanged: (value) {
+        if (value == null) return;
+        setState(() {
+          _webViewProvider.tabSleepMinutesOverride = value;
+        });
+      },
     );
   }
 
@@ -3223,11 +3516,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 ),
                 Text(
                   'Certain iOS versions (e.g.: iOS 16) may experience overscroll issues; enabling this may prevent that behavior.',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -3259,11 +3548,7 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               ),
               Text(
                 'Swiping left-to-right navigates backwards and right-to-left forwards; enable to reverse these actions.',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -3282,7 +3567,8 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 children: [
                   const Flexible(child: Text("Center text field when editing")),
                   Switch(
-                    value: _settingsProvider.browserCenterEditingTextField &&
+                    value:
+                        _settingsProvider.browserCenterEditingTextField &&
                         _settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed,
                     onChanged: !_settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed
                         ? null
@@ -3293,28 +3579,21 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                           },
                     activeTrackColor: Colors.lightGreenAccent,
                     activeThumbColor: Colors.green,
-                    inactiveThumbColor:
-                        !_settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed ? Colors.grey[800] : null,
+                    inactiveThumbColor: !_settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed
+                        ? Colors.grey[800]
+                        : null,
                   ),
                 ],
               ),
               if (_settingsProvider.browserCenterEditingTextFieldRemoteConfigAllowed)
                 Text(
                   "Automatically scrolls to keep the text field visible when editing.",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 )
               else
                 Text(
                   "This option is temporarily disabled from Torn PDA and can't be changed right now",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
             ],
           ),
@@ -3333,7 +3612,8 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                 children: [
                   const Flexible(child: Text("Extend page height for keyboard")),
                   Switch(
-                    value: _settingsProvider.browserExtendHeightForKeyboard &&
+                    value:
+                        _settingsProvider.browserExtendHeightForKeyboard &&
                         _settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed,
                     onChanged: !_settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed
                         ? null
@@ -3344,39 +3624,28 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
                           },
                     activeTrackColor: Colors.lightGreenAccent,
                     activeThumbColor: Colors.green,
-                    inactiveThumbColor:
-                        !_settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed ? Colors.grey[800] : null,
+                    inactiveThumbColor: !_settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed
+                        ? Colors.grey[800]
+                        : null,
                   ),
                 ],
               ),
               if (_settingsProvider.browserExtendHeightForKeyboardRemoteConfigAllowed)
                 Text(
                   'Adds extra scroll room when pages are shorter than the screen to avoid the keyboard covering inputs.',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 )
               else
                 Text(
                   "This option is temporarily disabled from Torn PDA and can't be changed right now",
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                  ),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
                 ),
             ],
           ),
         ),
       ),
     ];
-    return buildSectionWithRows(
-      title: "GESTURES & SCROLL",
-      rows: rows,
-      searchText: _searchText,
-    );
+    return buildSectionWithRows(title: "GESTURES & SCROLL", rows: rows, searchText: _searchText);
   }
 
   String _buildSingleLabel(double percentage, int currentMax, String type) {
@@ -3422,24 +3691,13 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               spacing: 5,
               runSpacing: 5,
               wheelDiameter: 155,
-              heading: Text(
-                'Select color',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              subheading: Text(
-                'Select color shade',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              wheelSubheading: Text(
-                'Selected color and its shades',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+              heading: Text('Select color', style: Theme.of(context).textTheme.titleSmall),
+              subheading: Text('Select color shade', style: Theme.of(context).textTheme.titleSmall),
+              wheelSubheading: Text('Selected color and its shades', style: Theme.of(context).textTheme.titleSmall),
               showMaterialName: true,
               showColorName: true,
               showColorCode: true,
-              copyPasteBehavior: const ColorPickerCopyPasteBehavior(
-                longPressMenu: true,
-              ),
+              copyPasteBehavior: const ColorPickerCopyPasteBehavior(longPressMenu: true),
               materialNameTextStyle: Theme.of(context).textTheme.bodySmall,
               colorNameTextStyle: Theme.of(context).textTheme.bodySmall,
               colorCodeTextStyle: Theme.of(context).textTheme.bodySmall,
@@ -3493,24 +3751,13 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
               spacing: 5,
               runSpacing: 5,
               wheelDiameter: 155,
-              heading: Text(
-                'Select color',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              subheading: Text(
-                'Select color shade',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              wheelSubheading: Text(
-                'Selected color and its shades',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+              heading: Text('Select color', style: Theme.of(context).textTheme.titleSmall),
+              subheading: Text('Select color shade', style: Theme.of(context).textTheme.titleSmall),
+              wheelSubheading: Text('Selected color and its shades', style: Theme.of(context).textTheme.titleSmall),
               showMaterialName: true,
               showColorName: true,
               showColorCode: true,
-              copyPasteBehavior: const ColorPickerCopyPasteBehavior(
-                longPressMenu: true,
-              ),
+              copyPasteBehavior: const ColorPickerCopyPasteBehavior(longPressMenu: true),
               materialNameTextStyle: Theme.of(context).textTheme.bodySmall,
               colorNameTextStyle: Theme.of(context).textTheme.bodySmall,
               colorCodeTextStyle: Theme.of(context).textTheme.bodySmall,
@@ -3655,39 +3902,21 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           value: 0,
           child: SizedBox(
             width: 80,
-            child: Text(
-              "Default",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Default", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: 1,
           child: SizedBox(
             width: 80,
-            child: Text(
-              "Bottom bar",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Bottom bar", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: 2,
           child: SizedBox(
             width: 80,
-            child: Text(
-              "Dialog",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Dialog", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
       ],
@@ -3719,39 +3948,21 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           value: "center",
           child: SizedBox(
             width: 70,
-            child: Text(
-              "Top",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Top", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: "left",
           child: SizedBox(
             width: 70,
-            child: Text(
-              "Left",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Left", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: "right",
           child: SizedBox(
             width: 70,
-            child: Text(
-              "Right",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Right", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
       ],
@@ -3771,26 +3982,14 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           value: true,
           child: SizedBox(
             width: 70,
-            child: Text(
-              "Share",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Share", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: false,
           child: SizedBox(
             width: 70,
-            child: Text(
-              "Save",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Save", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
       ],
@@ -3810,39 +4009,21 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           value: BrowserRefreshSetting.icon,
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Icon",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Icon", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: BrowserRefreshSetting.pull,
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Pull to refresh",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Pull to refresh", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: BrowserRefreshSetting.both,
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Both",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Both", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
       ],
@@ -3864,39 +4045,21 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           value: "off",
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Off",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Off", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: "narrow",
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Always",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Always", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
         DropdownMenuItem(
           value: "wide",
           child: SizedBox(
             width: 100,
-            child: Text(
-              "Wide screen",
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 12,
-              ),
-            ),
+            child: Text("Wide screen", textAlign: TextAlign.right, style: TextStyle(fontSize: 12)),
           ),
         ),
       ],
@@ -3911,14 +4074,12 @@ class SettingsBrowserPageState extends State<SettingsBrowserPage> {
           if (width < 500) {
             BotToast.showText(
               clickClose: true,
-              text: "Please note that your current screen configuration (${width.round()} DPI) might "
+              text:
+                  "Please note that your current screen configuration (${width.round()} DPI) might "
                   "not be wide enough to display the navigation arrows in all circumstances (e.g. when other "
                   "icons are present, such as when chaining)."
                   "\n\nRemember you can always swipe left or right in the page title to navigate.",
-              textStyle: const TextStyle(
-                fontSize: 14,
-                color: Colors.white,
-              ),
+              textStyle: const TextStyle(fontSize: 14, color: Colors.white),
               contentColor: Colors.blue[600]!,
               duration: const Duration(seconds: 15),
               contentPadding: const EdgeInsets.all(10),

@@ -25,6 +25,8 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
+    ndkVersion = "28.2.13676358"
+    
     compileSdkVersion 36
 
     namespace 'com.manuito.tornpda'
@@ -95,6 +97,7 @@ flutter {
 
 dependencies {
     testImplementation 'junit:junit:4.12'
+    testImplementation 'org.json:json:20231013'
     androidTestImplementation 'androidx.test:runner:1.1.1'
     implementation 'androidx.multidex:multidex:2.0.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.1.1'

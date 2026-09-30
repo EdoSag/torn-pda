@@ -4,6 +4,7 @@ import android.util.Log
 import java.util.UUID
 
 class DefaultLiveUpdateManager(
+    private val activityType: LiveUpdateActivityType,
     private val adapter: LiveUpdateAdapter,
     private val eligibilityProvider: LiveUpdateEligibilityProvider,
     private val sessionStore: LiveUpdateSessionStore,
@@ -19,20 +20,20 @@ class DefaultLiveUpdateManager(
     }
 
     override fun startOrUpdate(payload: Map<String, Any?>): LiveUpdateStartResult = synchronized(lock) {
-        val parsedPayload = LiveUpdatePayload.fromMap(payload)
-        if (!parsedPayload.isValid) {
+        val parsedPayload = LiveUpdatePayload.fromMap(activityType, payload)
+        if (!parsedPayload.isValidFor(activityType)) {
             Log.w(TAG, "Received invalid Live Update payload: $payload")
             return@synchronized LiveUpdateStartResult(
                 status = LiveUpdateRequestStatus.ERROR,
                 reason = LiveUpdateUnsupportedReason.INTERNAL_ERROR,
-                errorMessage = "Missing arrival/departure timestamps",
+                errorMessage = "Missing required ${activityType.wireName} live update fields",
             )
         }
 
         val eligibility = eligibilityProvider.evaluate()
-        notifyCapability(eligibility.snapshot)
 
         if (!eligibility.eligible) {
+            notifyCapability(eligibility.snapshot)
             return@synchronized LiveUpdateStartResult(
                 status = LiveUpdateRequestStatus.UNSUPPORTED,
                 reason = eligibility.reason,
@@ -43,12 +44,31 @@ class DefaultLiveUpdateManager(
         val now = System.currentTimeMillis()
         val existingSession = sessionStore.current()
         val sessionId = existingSession?.sessionId ?: sessionIdProvider()
+
+        // Dedup avoids re-popping the heads-up and re-arming WorkManager on every poll
+        if (existingSession != null
+            && !existingSession.watchOnly
+            && adapter.isActivityActive()
+            && existingSession.contentIdentifier == parsedPayload.contentIdentifier
+            && existingSession.lastHasArrived == parsedPayload.hasArrived
+        ) {
+            return@synchronized LiveUpdateStartResult(
+                status = LiveUpdateRequestStatus.UPDATED,
+                sessionId = sessionId,
+                capabilitySnapshot = eligibility.snapshot,
+            )
+        }
+
+        notifyCapability(eligibility.snapshot)
+
         sessionStore.markActive(
             LiveUpdateSessionState(
                 sessionId = sessionId,
-                travelIdentifier = parsedPayload.travelIdentifier,
+                activityType = activityType,
+                contentIdentifier = parsedPayload.contentIdentifier,
                 startedAtMs = existingSession?.startedAtMs ?: now,
                 lastUpdatedAtMs = now,
+                lastHasArrived = parsedPayload.hasArrived,
             ),
         )
 
